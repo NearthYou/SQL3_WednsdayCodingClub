@@ -28,6 +28,7 @@ typedef struct TabVer {
     int uk_idx[MAX_UKS];
     Row *rows;
     int row_cnt;
+    int row_cap;
     long next_id;
     unsigned long ver_id;
     BPlusTree *pk_tree;
@@ -501,6 +502,24 @@ static int row_copy(TabVer *tab, Row *dst, Row *src) {
     return 1;
 }
 
+static int ensure_row_cap(TabVer *tab, int need) {
+    Row *nrows;
+    int cap;
+
+    if (!tab || need <= tab->row_cap) return 1;
+    cap = tab->row_cap > 0 ? tab->row_cap : 16;
+    while (cap < need) {
+        if (cap > INT_MAX / 2) return 0;
+        cap *= 2;
+    }
+    nrows = (Row *)realloc(tab->rows, (size_t)cap * sizeof(Row));
+    if (!nrows) return 0;
+    memset(nrows + tab->row_cap, 0, (size_t)(cap - tab->row_cap) * sizeof(Row));
+    tab->rows = nrows;
+    tab->row_cap = cap;
+    return 1;
+}
+
 static int row_new(TabVer *tab, Row *dst, char **vals, int val_cnt, long *new_id) {
     int i;
     int miss_pk = 0;
@@ -592,6 +611,7 @@ static TabVer *tab_clone(TabVer *src) {
     dst->pk_idx = src->pk_idx;
     dst->uk_cnt = src->uk_cnt;
     dst->next_id = src->next_id;
+    dst->row_cap = src->row_cnt;
     memcpy(dst->cols, src->cols, sizeof(src->cols));
     memcpy(dst->uk_idx, src->uk_idx, sizeof(src->uk_idx));
     dst->row_cnt = src->row_cnt;
@@ -667,16 +687,12 @@ static int load_hdr(TabVer *tab, const char *line) {
 static int load_row(TabVer *tab, const char *line) {
     char buf[RECORD_SIZE];
     char *vals[MAX_COLS];
-    Row *nrows;
     int cnt;
     int i;
 
     cnt = split_csv(line, vals, MAX_COLS, buf, sizeof(buf));
     if (cnt != tab->col_cnt) return 0;
-    nrows = (Row *)realloc(tab->rows, (size_t)(tab->row_cnt + 1) * sizeof(Row));
-    if (!nrows) return 0;
-    tab->rows = nrows;
-    memset(&tab->rows[tab->row_cnt], 0, sizeof(Row));
+    if (!ensure_row_cap(tab, tab->row_cnt + 1)) return 0;
     tab->rows[tab->row_cnt].vals = (char **)calloc((size_t)tab->col_cnt, sizeof(char *));
     if (!tab->rows[tab->row_cnt].vals) return 0;
     for (i = 0; i < tab->col_cnt; i++) {
@@ -689,7 +705,10 @@ static int load_row(TabVer *tab, const char *line) {
     }
     if (tab->pk_idx >= 0) {
         long key;
-        if (!parse_l(tab->rows[tab->row_cnt].vals[tab->pk_idx], &key)) return 0;
+        if (!parse_l(tab->rows[tab->row_cnt].vals[tab->pk_idx], &key)) {
+            free_row(&tab->rows[tab->row_cnt], tab->col_cnt);
+            return 0;
+        }
         if (key >= tab->next_id) tab->next_id = key + 1;
     }
     tab->row_cnt++;
@@ -870,6 +889,16 @@ static TxTab *tx_touch(DbTx *tx, const char *name) {
     return item;
 }
 
+static int tx_make_work(TxTab *item) {
+    if (!item) return 0;
+    if (!item->work) {
+        item->work = tab_clone(item->base);
+        if (!item->work) return 0;
+    }
+    item->dirty = 1;
+    return 1;
+}
+
 static int stmt_is_wr(Statement *stmt) {
     return stmt->type == STMT_INSERT ||
            stmt->type == STMT_UPDATE ||
@@ -879,7 +908,6 @@ static int stmt_is_wr(Statement *stmt) {
 static int ins_do(TabVer *tab, Statement *stmt, DbRes *res) {
     char buf[RECORD_SIZE];
     char *vals[MAX_COLS];
-    Row *nrows;
     long new_id = 0;
     int val_cnt;
     int i;
@@ -889,12 +917,10 @@ static int ins_do(TabVer *tab, Statement *stmt, DbRes *res) {
         res_err(res, "BAD_REQ", "table row limit reached");
         return -1;
     }
-    nrows = (Row *)realloc(tab->rows, (size_t)(tab->row_cnt + 1) * sizeof(Row));
-    if (!nrows) {
+    if (!ensure_row_cap(tab, tab->row_cnt + 1)) {
         res_err(res, "OOM", "out of memory");
         return -1;
     }
-    tab->rows = nrows;
     memset(&tab->rows[tab->row_cnt], 0, sizeof(Row));
     if (!row_new(tab, &tab->rows[tab->row_cnt], vals, val_cnt, &new_id)) {
         res_err(res, "BAD_SQL", "invalid INSERT values");
@@ -1261,9 +1287,12 @@ int db_txdo(DbTx *tx, const char *sql, DbRes *res) {
     res_clr(res);
     if (!parse_ok(tx->db, sql, &stmt, res)) return -1;
     pthread_mutex_lock(&tx->db->mu);
-    if (stmt_is_wr(&stmt)) item = tx_touch(tx, stmt.table_name);
-    else item = tx_view(tx, stmt.table_name);
+    item = tx_view(tx, stmt.table_name);
     pthread_mutex_unlock(&tx->db->mu);
+    if (stmt_is_wr(&stmt) && !tx_make_work(item)) {
+        res_err(res, "OOM", "out of memory");
+        return -1;
+    }
     tab = item ? (item->work ? item->work : item->base) : NULL;
     if (!tab) {
         res_err(res, "BAD_SQL", "unknown table");
@@ -1298,8 +1327,14 @@ int db_exec(Db *db, const char *sql, DbRes *res) {
         return -1;
     }
     pthread_mutex_lock(&db->mu);
-    item = tx_touch(tx, stmt.table_name);
+    item = tx_view(tx, stmt.table_name);
     pthread_mutex_unlock(&db->mu);
+    if (item && !tx_make_work(item)) {
+        db_abort(db, tx);
+        tx_free(tx);
+        res_err(res, "OOM", "out of memory");
+        return -1;
+    }
     if (!item) {
         db_abort(db, tx);
         tx_free(tx);

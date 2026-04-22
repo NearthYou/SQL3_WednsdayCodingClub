@@ -17,7 +17,7 @@
 #include "cache/query_cache.h"
 #include "stats/stats.h"
 
-#define CONN_BUF_CAP 32768
+#define CONN_BUF_INIT 32768
 #define MAX_HDR_BYTES 8192
 
 typedef struct {
@@ -27,8 +27,10 @@ typedef struct {
 
 typedef struct {
     int fd;
-    char buf[CONN_BUF_CAP];
+    char *buf;
     size_t used;
+    size_t cap;
+    size_t max_total;
 } HttpConn;
 
 static int write_all(int fd, const char *buf, size_t len) {
@@ -42,6 +44,25 @@ static int write_all(int fd, const char *buf, size_t len) {
         len -= (size_t)n;
     }
     return 1;
+}
+
+static void conn_init(HttpConn *conn, int fd, int max_body) {
+    size_t body = (max_body > 0) ? (size_t)max_body : 1048576U;
+    size_t hard = body + MAX_HDR_BYTES + 4;
+    size_t init = CONN_BUF_INIT;
+
+    if (hard < init) init = hard;
+    conn->fd = fd;
+    conn->buf = (char *)calloc(init + 1, 1);
+    conn->used = 0;
+    conn->cap = conn->buf ? init : 0;
+    conn->max_total = hard;
+}
+
+static void conn_free(HttpConn *conn) {
+    if (!conn) return;
+    free(conn->buf);
+    memset(conn, 0, sizeof(*conn));
 }
 
 static unsigned long long now_ns(void) {
@@ -82,9 +103,27 @@ static void trim(char *s) {
 static int ensure_buffered(HttpConn *conn, size_t target, const char *eof_msg) {
     while (conn->used < target) {
         ssize_t nread;
+        size_t ncap;
+        char *nbuf;
 
-        if (conn->used >= sizeof(conn->buf)) return 413;
-        nread = recv(conn->fd, conn->buf + conn->used, sizeof(conn->buf) - conn->used, 0);
+        if (target > conn->max_total) return 413;
+        if (conn->cap < target) {
+            ncap = conn->cap > 0 ? conn->cap : CONN_BUF_INIT;
+            while (ncap < target) {
+                if (ncap > conn->max_total / 2) {
+                    ncap = conn->max_total;
+                    break;
+                }
+                ncap *= 2;
+            }
+            if (ncap > conn->max_total) ncap = conn->max_total;
+            if (ncap < target) return 413;
+            nbuf = (char *)realloc(conn->buf, ncap + 1);
+            if (!nbuf) return 500;
+            conn->buf = nbuf;
+            conn->cap = ncap;
+        }
+        nread = recv(conn->fd, conn->buf + conn->used, conn->cap - conn->used, 0);
         if (nread == 0) return conn->used == 0 ? 0 : 400;
         if (nread < 0) {
             if (errno == EINTR) continue;
@@ -104,11 +143,13 @@ static int parse_req(HttpConn *conn, int max_body, HttpReq *req, int *conn_close
     char *line;
     char *saveptr = NULL;
     size_t body_len = 0;
+    size_t body_cap = max_body > 0 ? (size_t)max_body : 0;
     char version[16];
 
     memset(req, 0, sizeof(*req));
     *conn_close = 0;
 
+    if (!conn->buf) return 500;
     while ((hdr_end = find_hdr_end(conn->buf, conn->used)) == NULL) {
         int rc;
 
@@ -146,9 +187,9 @@ static int parse_req(HttpConn *conn, int max_body, HttpReq *req, int *conn_close
         }
     }
 
-    if ((int)body_len > max_body) return 413;
+    if (body_len > body_cap) return 413;
     req_bytes = hdr_len + 4 + body_len;
-    if (req_bytes > sizeof(conn->buf)) return 413;
+    if (req_bytes > conn->max_total) return 413;
     {
         int rc = ensure_buffered(conn, req_bytes, "failed to read request body");
         if (rc != 200) return rc;
@@ -211,7 +252,7 @@ static void conn_run(void *arg) {
     int req_count = 0;
 
     memset(&hc, 0, sizeof(hc));
-    hc.fd = conn->fd;
+    conn_init(&hc, conn->fd, conn->srv->max_body);
     while (1) {
         int code;
         int conn_close = 0;
@@ -266,6 +307,7 @@ static void conn_run(void *arg) {
         free_req(&req);
         if (conn_close) break;
     }
+    conn_free(&hc);
     close(conn->fd);
     free(conn);
 }

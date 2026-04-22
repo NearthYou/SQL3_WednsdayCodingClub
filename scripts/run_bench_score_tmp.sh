@@ -14,18 +14,15 @@ trap cleanup EXIT INT TERM
 
 mkdir -p "$bench_dir"
 mkdir -p "$repo_dir/artifacts/bench"
+mkdir -p "$bench_dir/data"
 
-for file in \
-    Makefile \
-    main.c lexer.c parser.c bptree.c executor.c \
-    lexer.h parser.h bptree.h executor.h types.h \
-    bench_workload_generator.c benchmark_runner.c bench_formula_test.c
-do
-    cp "$repo_dir/$file" "$bench_dir/$file"
-done
+cp "$repo_dir/Makefile" "$bench_dir/Makefile"
+cp -R "$repo_dir/src" "$bench_dir/src"
+cp -R "$repo_dir/tools" "$bench_dir/tools"
+cp -R "$repo_dir/scripts" "$bench_dir/scripts"
 
-if [ -f "$repo_dir/jungle_benchmark_users.csv" ]; then
-    cp "$repo_dir/jungle_benchmark_users.csv" "$bench_dir/jungle_benchmark_users.csv"
+if [ -d "$repo_dir/data" ]; then
+    cp -R "$repo_dir/data/." "$bench_dir/data/"
 fi
 
 (

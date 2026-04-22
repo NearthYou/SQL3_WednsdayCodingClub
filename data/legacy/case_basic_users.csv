@@ -1,0 +1,5 @@
+id(PK),email(UK),phone(UK),pwd(NN),name
+3,user2@test.com,010-3333,hello123,UserTwo
+2,user1@test.com,010-2222,qwerty,UserOne
+1,admin@test.com,010-1111,pass123,Admin
+4,auto1@test.com,010-5555,pw5555,AutoUser

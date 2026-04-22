@@ -8,7 +8,7 @@
 
 ## 기본 파일과 명령
 
-- 기본 파일: `jungle_benchmark_users.csv`
+- 기본 파일: `data/legacy/jungle_benchmark_users.csv`
 - 기본 테이블명: `jungle_benchmark_users`
 - 생성 명령:
 

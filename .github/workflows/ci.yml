@@ -1,0 +1,43 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl python3
+
+      - name: Build
+        run: make build
+
+      - name: Test
+        run: make test
+
+  sanitize:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential curl python3
+
+      - name: Clean
+        run: make clean
+
+      - name: Sanitizer Test
+        run: |
+          make test \
+            CFLAGS='-O1 -fdiagnostics-color=always -g -fsanitize=address,undefined -fno-omit-frame-pointer' \
+            LDLIBS='-lpthread -fsanitize=address,undefined'

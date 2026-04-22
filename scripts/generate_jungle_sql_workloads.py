@@ -8,9 +8,10 @@ import sys
 
 
 ROOT = Path(__file__).resolve().parent.parent
-SOURCE_CSV = ROOT / "jungle_benchmark_users.csv"
+LEGACY_DIR = ROOT / "data" / "legacy"
+SOURCE_CSV = LEGACY_DIR / "jungle_benchmark_users.csv"
 WORKLOAD_TABLE = "jungle_workload_users"
-WORKLOAD_CSV = ROOT / f"{WORKLOAD_TABLE}.csv"
+WORKLOAD_CSV = LEGACY_DIR / f"{WORKLOAD_TABLE}.csv"
 OUTPUT_DIR = ROOT / "generated_sql"
 INSERT_SQL = OUTPUT_DIR / "jungle_insert_1000000.sql"
 UPDATE_SQL = OUTPUT_DIR / "jungle_update_1000000.sql"
@@ -99,6 +100,7 @@ def build_sql_workloads() -> None:
 def main() -> None:
     ensure_source_csv()
     OUTPUT_DIR.mkdir(exist_ok=True)
+    LEGACY_DIR.mkdir(parents=True, exist_ok=True)
     build_sql_workloads()
 
     print(f"[ok] wrote {INSERT_SQL}")

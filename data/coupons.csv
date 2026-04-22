@@ -1,0 +1,4 @@
+id(PK),code(UK),user_id(NN),status
+1,WELCOME10,1,ready
+2,SPRING15,1,used
+3,LUNCH5,2,ready

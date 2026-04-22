@@ -1,0 +1,4 @@
+id(PK),user_id(NN),status(NN),total
+1,1,delivering,18000
+2,2,ready,9500
+3,3,done,22000

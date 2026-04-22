@@ -35,7 +35,7 @@ for i in $(seq 1 "$CONCURRENCY"); do
     fi
     curl -sS --max-time 5 -X POST "http://127.0.0.1:${PORT}/query" \
       -H 'Content-Type: text/plain' \
-      --data "$SQL" | grep -q '"status":"'
+      --data "$SQL" | grep -Eq '"status"[[:space:]]*:'
   ) &
   PIDS+=("$!")
 done

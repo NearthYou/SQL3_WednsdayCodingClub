@@ -16,9 +16,10 @@
 #include "api/pool/thread_pool.h"
 #include "executor.h"
 
-#define API_PORT 8080
+#define API_PORT_DEFAULT 8080
 #define API_BACKLOG 128
 #define API_QUEUE_CAPACITY 256
+#define API_WORKER_COUNT 16
 
 static volatile sig_atomic_t g_shutdown_requested = 0;
 static unsigned long long g_trace_seq = 0;
@@ -33,10 +34,20 @@ static void on_signal(int signo) {
 }
 
 static int choose_worker_count(void) {
-    long cores = sysconf(_SC_NPROCESSORS_ONLN);
-    if (cores <= 0) return 16;
-    if (cores > 512) cores = 512;
-    return (int)(cores * 2);
+    return API_WORKER_COUNT;
+}
+
+static int choose_port(void) {
+    const char *env = getenv("PORT");
+    char *endptr = NULL;
+    long port;
+
+    if (!env || env[0] == '\0') return API_PORT_DEFAULT;
+    port = strtol(env, &endptr, 10);
+    if (endptr == env || *endptr != '\0' || port <= 0 || port > 65535) {
+        return API_PORT_DEFAULT;
+    }
+    return (int)port;
 }
 
 int main(void) {
@@ -45,6 +56,7 @@ int main(void) {
     ThreadPool pool;
     struct sigaction sa;
     int workers;
+    int port;
 
     memset(&queue, 0, sizeof(queue));
     memset(&pool, 0, sizeof(pool));
@@ -68,6 +80,7 @@ int main(void) {
     }
 
     workers = choose_worker_count();
+    port = choose_port();
     if (!thread_pool_start(&pool, workers, &queue)) {
         fprintf(stderr, "failed to start thread pool\n");
         task_queue_destroy(&queue);
@@ -75,7 +88,7 @@ int main(void) {
         return 1;
     }
 
-    listener_fd = create_listener_socket(API_PORT, API_BACKLOG);
+    listener_fd = create_listener_socket(port, API_BACKLOG);
     if (listener_fd < 0) {
         fprintf(stderr, "failed to create listener socket\n");
         thread_pool_stop(&pool);
@@ -84,7 +97,7 @@ int main(void) {
         return 1;
     }
 
-    log_write(LOG_INFO, 0, "server started on port %d (workers=%d)", API_PORT, workers);
+    log_write(LOG_INFO, 0, "server started on port %d (workers=%d)", port, workers);
 
     while (!g_shutdown_requested) {
         int client_fd;

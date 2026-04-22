@@ -103,24 +103,27 @@ int json_build_response(const DbResult *result, char **out_json, size_t *out_len
     jb.buf[0] = '\0';
 
     if (!result->ok) {
-        if (!jb_append(&jb, "{\"status\":\"error\",\"message\":")) goto fail;
+        if (!jb_append(&jb, "{\n  \"status\": \"error\",\n  \"message\": ")) goto fail;
         if (!jb_append_escaped(&jb, result->error_message ? result->error_message : "DB execution failed")) goto fail;
-        if (!jb_append(&jb, "}")) goto fail;
+        if (!jb_append(&jb, "\n}")) goto fail;
     } else {
-        if (!jb_append(&jb, "{\"status\":\"ok\",\"rows\":[")) goto fail;
+        if (!jb_append(&jb, "{\n  \"status\": \"ok\",\n  \"rows\": [")) goto fail;
         for (i = 0; i < result->row_count; i++) {
             const DbRow *row = &result->rows[i];
             if (i > 0 && !jb_append(&jb, ",")) goto fail;
-            if (!jb_append(&jb, "{")) goto fail;
+            if (!jb_append(&jb, "\n    {")) goto fail;
             for (j = 0; j < row->cell_count; j++) {
                 if (j > 0 && !jb_append(&jb, ",")) goto fail;
+                if (!jb_append(&jb, "\n      ")) goto fail;
                 if (!jb_append_escaped(&jb, row->cells[j].name ? row->cells[j].name : "")) goto fail;
-                if (!jb_append(&jb, ":")) goto fail;
+                if (!jb_append(&jb, ": ")) goto fail;
                 if (!jb_append_escaped(&jb, row->cells[j].value ? row->cells[j].value : "")) goto fail;
             }
+            if (row->cell_count > 0 && !jb_append(&jb, "\n    ")) goto fail;
             if (!jb_append(&jb, "}")) goto fail;
         }
-        if (!jb_append(&jb, "]}")) goto fail;
+        if (result->row_count > 0 && !jb_append(&jb, "\n  ")) goto fail;
+        if (!jb_append(&jb, "]\n}")) goto fail;
     }
 
     *out_json = jb.buf;

@@ -3749,7 +3749,7 @@ static int execute_select_internal(Statement *stmt, int emit_results, int emit_t
         }
         if (exec.emit_traces) INFO_PRINTF("[index] B+ tree id lookup\n");
         if (bptree_search(tc->id_index, key, &row_index)) {
-            if (!exec.emit_results && stmt->where_count == 1) {
+            if (!exec.emit_results && !g_select_sink && stmt->where_count == 1) {
                 if (matched_rows) *matched_rows = 1;
                 return 1;
             }
@@ -3761,7 +3761,7 @@ static int execute_select_internal(Statement *stmt, int emit_results, int emit_t
         if (tc->cache_truncated) {
             long tail_offset;
             if (find_tail_pk_offset(tc, key, &tail_offset)) {
-                if (!exec.emit_results && stmt->where_count == 1) {
+                if (!exec.emit_results && !g_select_sink && stmt->where_count == 1) {
                     if (matched_rows) *matched_rows = 1;
                     return 1;
                 }
@@ -3782,7 +3782,7 @@ static int execute_select_internal(Statement *stmt, int emit_results, int emit_t
         int row_index;
         if (exec.emit_traces) INFO_PRINTF("[index] UK B+ tree lookup on column '%s'\n", cond->col);
         if (find_uk_row(tc, index_col, cond->val, &row_index)) {
-            if (!exec.emit_results && stmt->where_count == 1) {
+            if (!exec.emit_results && !g_select_sink && stmt->where_count == 1) {
                 if (matched_rows) *matched_rows = 1;
                 return 1;
             }

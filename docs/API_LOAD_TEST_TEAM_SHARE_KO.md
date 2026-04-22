@@ -90,7 +90,7 @@ API 서버는 기존 CLI와 별도 실행 파일로 분리했다.
 - listener thread가 accept 후 bounded queue에 fd를 넣는다.
 - worker thread pool이 queue에서 fd를 꺼내 요청을 처리한다.
 - queue capacity는 256이다.
-- worker 수는 `sysconf(_SC_NPROCESSORS_ONLN) * 2`이며 이번 WSL 환경에서는 32개로 실행됐다.
+- worker 수는 현재 16개로 고정했다.
 - queue full 또는 shutdown 중 enqueue 실패 시 listener가 직접 `503`을 반환한다.
 
 ### DB 보호 정책
@@ -226,6 +226,57 @@ CONCURRENCY=50 REQUESTS=1000 MIX=read-heavy bash tests/api/load_report.sh
 | success rate | >= 99% | 100% |
 | 503 rate | <= 1% | 0% |
 | p95 latency | <= 250 ms | 50.20 ms |
+
+### API Load Test - 16 Worker 재측정
+
+worker thread 수를 CPU 기반 `sysconf(_SC_NPROCESSORS_ONLN) * 2`에서 16개 고정으로 바꾼 뒤 같은 read-heavy 조건으로 다시 측정했다.
+
+명령:
+
+```bash
+PORT=18086 CONCURRENCY=50 REQUESTS=1000 MIX=read-heavy REPORT=artifacts/api-load/report-workers16-c50-r1000.json bash tests/api/load_report.sh
+PORT=18087 CONCURRENCY=100 REQUESTS=1000 MIX=read-heavy REPORT=artifacts/api-load/report-workers16-c100-r1000.json bash tests/api/load_report.sh
+PORT=18088 CONCURRENCY=200 REQUESTS=1000 MIX=read-heavy REPORT=artifacts/api-load/report-workers16-c200-r1000.json bash tests/api/load_report.sh
+```
+
+결과 파일:
+
+- `artifacts/api-load/report-workers16-c50-r1000.json`
+- `artifacts/api-load/report-workers16-c50-r1000.md`
+- `artifacts/api-load/report-workers16-c100-r1000.json`
+- `artifacts/api-load/report-workers16-c100-r1000.md`
+- `artifacts/api-load/report-workers16-c200-r1000.json`
+- `artifacts/api-load/report-workers16-c200-r1000.md`
+
+기존 기준과 16 worker의 같은 조건 비교:
+
+| 지표 | 기존 기준 | 16 worker | 변화 |
+| --- | ---: | ---: | ---: |
+| concurrency | 50 | 50 | - |
+| requests | 1000 | 1000 | - |
+| success | 1000 | 1000 | 동일 |
+| errors | 0 | 0 | 동일 |
+| status 200 | 1000 | 1000 | 동일 |
+| requests/sec | 1331.76 | 1196.92 | -10.1% |
+| p50 latency | 32.01 ms | 33.72 ms | +5.3% |
+| p95 latency | 50.20 ms | 57.31 ms | +14.2% |
+| p99 latency | 58.68 ms | 64.51 ms | +9.9% |
+| max latency | 84.98 ms | 81.52 ms | -4.1% |
+
+16 worker 동시성별 결과:
+
+| concurrency | requests | success | errors | requests/sec | p50 latency | p95 latency | p99 latency | max latency |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 50 | 1000 | 1000 | 0 | 1196.92 | 33.72 ms | 57.31 ms | 64.51 ms | 81.52 ms |
+| 100 | 1000 | 1000 | 0 | 1252.86 | 44.28 ms | 85.52 ms | 102.72 ms | 136.45 ms |
+| 200 | 1000 | 1000 | 0 | 1231.94 | 18.30 ms | 65.70 ms | 80.40 ms | 102.66 ms |
+
+해석:
+
+- 16 worker로 줄인 뒤에도 세 조건 모두 `1000/1000` 성공, HTTP 503 및 runner error는 0건이었다.
+- 같은 concurrency 50 기준 RPS는 약 10.1% 낮아졌지만 p95는 57.31 ms로 목표 기준 250 ms 대비 여유가 크다.
+- concurrency 100/200에서도 p95가 100 ms 이하로 유지되어 현재 read-heavy mix에서는 worker 16개가 병목으로 드러나지 않았다.
+- concurrency 200의 p50이 concurrency 100보다 낮게 나온 것은 1000 요청 규모의 짧은 측정에서 스케줄링과 요청 분포 영향이 섞인 결과로 보고, 장시간 soak test에서는 더 큰 request 수로 재측정하는 편이 좋다.
 
 ### CLI Bench Smoke
 

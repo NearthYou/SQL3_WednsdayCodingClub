@@ -30,14 +30,15 @@ int main(void) {
     result.rows = &row;
 
     assert(json_build_response(&result, &json, &len) == 1);
-    assert(strstr(json, "\"status\":\"ok\"") != NULL);
-    assert(strstr(json, "\"email\":\"admin@test.com\"") != NULL);
+    assert(strstr(json, "\"status\": \"ok\"") != NULL);
+    assert(strstr(json, "\n  \"rows\": [") != NULL);
+    assert(strstr(json, "\"email\": \"admin@test.com\"") != NULL);
     free(json);
 
     result.ok = 0;
     result.error_message = "invalid SQL";
     assert(json_build_response(&result, &json, &len) == 1);
-    assert(strstr(json, "\"status\":\"error\"") != NULL);
+    assert(strstr(json, "\"status\": \"error\"") != NULL);
     assert(strstr(json, "invalid SQL") != NULL);
     free(json);
 

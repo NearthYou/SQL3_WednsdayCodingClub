@@ -1,4 +1,8 @@
 id(PK),email(UK),phone(UK),pwd(NN),name
-1,admin@test.com,010-1111,pass123,Admin
-2,user1@test.com,010-2222,qwerty,UserOne
 3,user2@test.com,010-3333,hello123,UserTwo
+2,user1@test.com,010-2222,qwerty,UserOne
+1,admin@test.com,010-1111,pass123,Admin
+4,auto1@test.com,010-5555,pw5555,AutoUser
+5,you@test.com,010-9999-0000,pw1234,MyName
+6,you2@test.com,010-9999-0001,pw1234,MyName
+8,you3@test.com,010-9999-2001,pw3234,MyName2

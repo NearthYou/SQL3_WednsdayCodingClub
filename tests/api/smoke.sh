@@ -26,7 +26,7 @@ request_ok() {
   body="$(curl -sS -X POST "http://127.0.0.1:${PORT}/query" \
     -H 'Content-Type: text/plain' \
     --data "$sql")"
-  echo "$body" | grep '"status":"ok"' >/dev/null || {
+  echo "$body" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"' || {
     echo "unexpected response: $body"
     echo "server log:"
     cat "$WORKDIR/server.log" || true

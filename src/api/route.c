@@ -470,6 +470,69 @@ static void free_arr(char **arr, int cnt) {
     free(arr);
 }
 
+static int read_file_all(const char *path, char **out, size_t *olen) {
+    FILE *fp;
+    long sz;
+    size_t nread;
+    char *buf;
+
+    *out = NULL;
+    *olen = 0;
+    fp = fopen(path, "rb");
+    if (!fp) return 0;
+    if (fseek(fp, 0, SEEK_END) != 0) {
+        fclose(fp);
+        return 0;
+    }
+    sz = ftell(fp);
+    if (sz < 0) {
+        fclose(fp);
+        return 0;
+    }
+    rewind(fp);
+    buf = (char *)calloc((size_t)sz + 1, 1);
+    if (!buf) {
+        fclose(fp);
+        return -1;
+    }
+    nread = fread(buf, 1, (size_t)sz, fp);
+    fclose(fp);
+    if (nread != (size_t)sz) {
+        free(buf);
+        return 0;
+    }
+    buf[sz] = '\0';
+    *out = buf;
+    *olen = (size_t)sz;
+    return 1;
+}
+
+static int do_asset(const HttpReq *req,
+                    HttpRes *res,
+                    const char *path,
+                    const char *content_type) {
+    char *raw = NULL;
+    size_t len = 0;
+    Buf buf;
+    int rc = read_file_all(path, &raw, &len);
+
+    if (rc == 0) {
+        return err_res(res, 500, "INT_ERR", "failed to load demo asset", req->req_id);
+    }
+    if (rc < 0) {
+        return err_res(res, 500, "OOM", "memory error", req->req_id);
+    }
+    buf_init(&buf);
+    buf.buf = raw;
+    buf.len = len;
+    buf.cap = len + 1;
+    if (!res_set_ct(res, 200, &buf, content_type)) {
+        free(raw);
+        return 0;
+    }
+    return 1;
+}
+
 static void zone_of(const char *lat, const char *lng, char *out, size_t osz) {
     if (lat && lng && strcmp(lat, "37.5") == 0 && strcmp(lng, "127.0") == 0) {
         strncpy(out, "seoul_east", osz - 1);
@@ -801,6 +864,18 @@ static int do_mst(Srv *srv, const HttpReq *req, HttpRes *res) {
 }
 
 int route_do(Srv *srv, const HttpReq *req, HttpRes *res) {
+    if (strcmp(req->path, "/demo") == 0) {
+        if (strcmp(req->meth, "GET") != 0) return err_res(res, 405, "BAD_METH", "method not allowed", req->req_id);
+        return do_asset(req, res, "web/demo.html", "text/html; charset=utf-8");
+    }
+    if (strcmp(req->path, "/demo.css") == 0) {
+        if (strcmp(req->meth, "GET") != 0) return err_res(res, 405, "BAD_METH", "method not allowed", req->req_id);
+        return do_asset(req, res, "web/demo.css", "text/css; charset=utf-8");
+    }
+    if (strcmp(req->path, "/demo.js") == 0) {
+        if (strcmp(req->meth, "GET") != 0) return err_res(res, 405, "BAD_METH", "method not allowed", req->req_id);
+        return do_asset(req, res, "web/demo.js", "application/javascript; charset=utf-8");
+    }
     if (strcmp(req->path, "/api/v1/health") == 0) {
         if (strcmp(req->meth, "GET") != 0) return err_res(res, 405, "BAD_METH", "method not allowed", req->req_id);
         return do_health(req, res);

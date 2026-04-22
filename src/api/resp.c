@@ -91,10 +91,17 @@ int buf_jsn(Buf *buf, const char *text) {
 }
 
 int res_set(HttpRes *res, int code, Buf *buf) {
+    return res_set_ct(res, code, buf, "application/json");
+}
+
+int res_set_ct(HttpRes *res, int code, Buf *buf, const char *content_type) {
     if (!res || !buf) return 0;
     res->code = code;
     res->body = buf->buf;
     res->len = buf->len;
+    res->content_type = (content_type && content_type[0] != '\0')
+                        ? content_type
+                        : "application/json";
     buf->buf = NULL;
     buf->len = 0;
     buf->cap = 0;

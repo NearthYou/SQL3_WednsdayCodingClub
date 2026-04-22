@@ -232,13 +232,16 @@ static const char *reason_of(int code) {
 }
 
 static void send_res(int fd, HttpRes *res, int conn_close) {
+    const char *ct = (res && res->content_type && res->content_type[0] != '\0')
+                         ? res->content_type
+                         : "application/json";
     char head[256];
     int n = snprintf(head, sizeof(head),
                      "HTTP/1.1 %d %s\r\n"
-                     "Content-Type: application/json\r\n"
+                     "Content-Type: %s\r\n"
                      "Content-Length: %zu\r\n"
                      "Connection: %s\r\n\r\n",
-                     res->code, reason_of(res->code), res->len, conn_close ? "close" : "keep-alive");
+                     res->code, reason_of(res->code), ct, res->len, conn_close ? "close" : "keep-alive");
     if (n > 0) write_all(fd, head, (size_t)n);
     if (res->body && res->len > 0) write_all(fd, res->body, res->len);
 }

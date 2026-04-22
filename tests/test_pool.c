@@ -53,6 +53,17 @@ static void wait_hit(State *st, int want) {
     pthread_mutex_unlock(&st->mu);
 }
 
+static void wait_done(Pool *pool, unsigned long want) {
+    PoolSt pst;
+    int i;
+
+    for (i = 0; i < 5000; i++) {
+        pool_stat(pool, &pst);
+        if (pst.done >= want) return;
+        usleep(1000);
+    }
+}
+
 static void let_go(State *st) {
     pthread_mutex_lock(&st->mu);
     st->go = 1;
@@ -86,6 +97,7 @@ int main(void) {
     wait_run(&st, 2);
     let_go(&st);
     wait_hit(&st, 3);
+    wait_done(pool, 3);
     pool_stat(pool, &pst);
     T_OK(pst.done == 3);
     T_OK(st.max >= 2);

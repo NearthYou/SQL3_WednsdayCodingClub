@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mini DBMS Demo</title>
+  <link rel="stylesheet" href="/demo.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Mini DBMS</div>
+    <div class="badge" id="server-badge">Server: unknown</div>
+  </header>
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">Live API Demo</p>
+      <h1>Step-by-step scenario for presentation</h1>
+      <p class="summary">Run each step and inspect request, response, trace, and metrics.</p>
+    </section>
+
+    <section class="steps" id="steps"></section>
+
+    <section class="viewer">
+      <article class="panel">
+        <h2>Request</h2>
+        <pre id="request-view" class="code"></pre>
+      </article>
+      <article class="panel">
+        <div class="panel-head">
+          <h2>Response</h2>
+          <div class="meta">
+            <span class="state idle" id="response-state">IDLE</span>
+            <span id="response-latency">-</span>
+          </div>
+        </div>
+        <pre id="response-view" class="code"></pre>
+      </article>
+    </section>
+
+    <section class="insights">
+      <article class="panel hidden" id="trace-panel">
+        <h2>Page Trace</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Thread</th>
+              <th>Latency (ms)</th>
+              <th>OK</th>
+            </tr>
+          </thead>
+          <tbody id="trace-body"></tbody>
+        </table>
+      </article>
+      <article class="panel hidden" id="metrics-panel">
+        <h2>Metrics Snapshot</h2>
+        <div class="metrics-grid" id="metrics-grid"></div>
+      </article>
+    </section>
+  </main>
+  <script src="/demo.js"></script>
+</body>
+</html>

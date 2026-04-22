@@ -50,6 +50,7 @@ typedef struct {
 
 struct Db {
     pthread_mutex_t mu;
+    pthread_mutex_t wr_lk[1024];
     Mvcc *mv;
     TabEnt *tabs;
     int tab_cnt;
@@ -80,7 +81,90 @@ typedef struct {
     int sel_cnt;
 } SelCtx;
 
+#define WRITE_LOCK_SHARDS 1024
+#define WRITE_RETRY_MAX 5
+#define WRITE_RETRY_BASE_US 1000
+#define WRITE_RETRY_CAP_US 32000
+
 static void tx_free(DbTx *tx);
+
+static void write_retry_sleep(int attempt) {
+    unsigned int shift = attempt < 10 ? (unsigned int)attempt : 10U;
+    useconds_t delay = (useconds_t)(WRITE_RETRY_BASE_US << shift);
+
+    if (delay > (useconds_t)WRITE_RETRY_CAP_US) delay = (useconds_t)WRITE_RETRY_CAP_US;
+    usleep(delay);
+}
+
+static int eq_icase(const char *a, const char *b) {
+    unsigned char ca;
+    unsigned char cb;
+
+    if (!a || !b) return 0;
+    while (*a && *b) {
+        ca = (unsigned char)*a++;
+        cb = (unsigned char)*b++;
+        if (tolower(ca) != tolower(cb)) return 0;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+static unsigned long fnv1a_mix(unsigned long h, const char *s) {
+    const unsigned char *p = (const unsigned char *)(s ? s : "");
+
+    while (*p) {
+        h ^= (unsigned long)(*p++);
+        h *= 1099511628211UL;
+    }
+    return h;
+}
+
+static void first_csv_token(const char *row, char *out, size_t outsz) {
+    size_t i = 0;
+    int in_q = 0;
+
+    if (!out || outsz == 0) return;
+    out[0] = '\0';
+    if (!row) return;
+    while (*row && i + 1 < outsz) {
+        char c = *row++;
+
+        if (c == '\'') in_q = !in_q;
+        if (c == ',' && !in_q) break;
+        out[i++] = c;
+    }
+    out[i] = '\0';
+}
+
+static unsigned long stmt_write_lock_idx(const Statement *stmt) {
+    unsigned long h = 1469598103934665603UL;
+    char key[256];
+    int i;
+
+    if (!stmt) return 0;
+    h = fnv1a_mix(h, stmt->table_name);
+    key[0] = '\0';
+
+    if (stmt->type == STMT_INSERT) {
+        first_csv_token(stmt->row_data, key, sizeof(key));
+    } else if (stmt->type == STMT_UPDATE || stmt->type == STMT_DELETE) {
+        for (i = 0; i < stmt->where_count; i++) {
+            if (stmt->where_conditions[i].type != WHERE_EQ) continue;
+            if (!eq_icase(stmt->where_conditions[i].col, "id")) continue;
+            strncpy(key, stmt->where_conditions[i].val, sizeof(key) - 1);
+            key[sizeof(key) - 1] = '\0';
+            break;
+        }
+    }
+
+    if (key[0] == '\0') {
+        h = fnv1a_mix(h, "|*");
+    } else {
+        h = fnv1a_mix(h, "|");
+        h = fnv1a_mix(h, key);
+    }
+    return h % WRITE_LOCK_SHARDS;
+}
 
 static char *dup_s(const char *src) {
     size_t len;
@@ -1140,12 +1224,16 @@ static void gc_tabs(Db *db) {
 
 Db *db_open(const DbCfg *cfg) {
     Db *db;
+    int i;
 
     db = (Db *)calloc(1, sizeof(Db));
     if (!db) return NULL;
     pthread_mutex_init(&db->mu, NULL);
+    for (i = 0; i < WRITE_LOCK_SHARDS; i++) pthread_mutex_init(&db->wr_lk[i], NULL);
     db->mv = mv_new();
     if (!db->mv) {
+        for (i = 0; i < WRITE_LOCK_SHARDS; i++) pthread_mutex_destroy(&db->wr_lk[i]);
+        pthread_mutex_destroy(&db->mu);
         free(db);
         return NULL;
     }
@@ -1166,6 +1254,7 @@ void db_close(Db *db) {
     }
     free(db->tabs);
     mv_del(db->mv);
+    for (i = 0; i < WRITE_LOCK_SHARDS; i++) pthread_mutex_destroy(&db->wr_lk[i]);
     pthread_mutex_destroy(&db->mu);
     free(db);
 }
@@ -1308,6 +1397,8 @@ int db_exec(Db *db, const char *sql, DbRes *res) {
     DbTx *tx;
     TxTab *item;
     int rc;
+    int attempt;
+    unsigned long wr_idx;
 
     if (!db || !sql || !res) return -1;
     res_clr(res);
@@ -1322,29 +1413,54 @@ int db_exec(Db *db, const char *sql, DbRes *res) {
         db_done(db, snap);
         return rc;
     }
-    if (db_begin(db, &tx) != 0) {
-        res_err(res, "INT_ERR", "tx begin failed");
-        return -1;
-    }
-    pthread_mutex_lock(&db->mu);
-    item = tx_view(tx, stmt.table_name);
-    pthread_mutex_unlock(&db->mu);
-    if (item && !tx_make_work(item)) {
+
+    wr_idx = stmt_write_lock_idx(&stmt);
+    pthread_mutex_lock(&db->wr_lk[wr_idx]);
+    for (attempt = 0; attempt <= WRITE_RETRY_MAX; attempt++) {
+        if (db_begin(db, &tx) != 0) {
+            res_err(res, "INT_ERR", "tx begin failed");
+            pthread_mutex_unlock(&db->wr_lk[wr_idx]);
+            return -1;
+        }
+        pthread_mutex_lock(&db->mu);
+        item = tx_view(tx, stmt.table_name);
+        pthread_mutex_unlock(&db->mu);
+        if (item && !tx_make_work(item)) {
+            db_abort(db, tx);
+            res_err(res, "OOM", "out of memory");
+            pthread_mutex_unlock(&db->wr_lk[wr_idx]);
+            return -1;
+        }
+        if (!item) {
+            db_abort(db, tx);
+            res_err(res, "BAD_SQL", "unknown table");
+            pthread_mutex_unlock(&db->wr_lk[wr_idx]);
+            return -1;
+        }
+        rc = exec_stmt(item->work, &stmt, res);
+        if (rc == 0 && db_commit(db, tx) == 0) {
+            pthread_mutex_unlock(&db->wr_lk[wr_idx]);
+            return 0;
+        }
+
+        /* parse/constraint 등 SQL 자체 실패는 재시도하지 않는다. */
+        if (res->err.code[0] != '\0') {
+            db_abort(db, tx);
+            pthread_mutex_unlock(&db->wr_lk[wr_idx]);
+            return -1;
+        }
+
         db_abort(db, tx);
-        tx_free(tx);
-        res_err(res, "OOM", "out of memory");
+        if (attempt < WRITE_RETRY_MAX) {
+            write_retry_sleep(attempt);
+            continue;
+        }
+        res_err(res, "TX_ABORT", "write conflict after retries");
+        pthread_mutex_unlock(&db->wr_lk[wr_idx]);
         return -1;
     }
-    if (!item) {
-        db_abort(db, tx);
-        tx_free(tx);
-        res_err(res, "BAD_SQL", "unknown table");
-        return -1;
-    }
-    rc = exec_stmt(item->work, &stmt, res);
-    if (rc == 0 && db_commit(db, tx) == 0) return 0;
-    if (res->err.code[0] == '\0') res_err(res, "TX_ABORT", "write conflict or commit failure");
-    db_abort(db, tx);
+    res_err(res, "TX_ABORT", "write conflict after retries");
+    pthread_mutex_unlock(&db->wr_lk[wr_idx]);
     return -1;
 }
 

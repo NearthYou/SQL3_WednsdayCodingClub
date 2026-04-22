@@ -56,7 +56,7 @@ TEST_BINS = \
 	$(BIN_DIR)/test_dbapi \
 	$(BIN_DIR)/test_tx
 
-.PHONY: all build build-tests test run demo-bptree demo-jungle scenario-jungle-regression scenario-jungle-range-and-replay scenario-jungle-update-constraints generate-jungle generate-jungle-sql benchmark benchmark-jungle bench-tools bench-test bench-smoke bench-score bench-report bench-clean clean
+.PHONY: all build build-tests test loadtest loadtest-200k run demo-bptree demo-jungle scenario-jungle-regression scenario-jungle-range-and-replay scenario-jungle-update-constraints generate-jungle generate-jungle-sql benchmark benchmark-jungle bench-tools bench-test bench-smoke bench-score bench-report bench-clean clean
 
 all: build
 
@@ -70,6 +70,12 @@ test: build-tests
 	./$(BIN_DIR)/test_dbapi
 	./$(BIN_DIR)/test_tx
 	sh tests/api_test.sh
+
+loadtest: build
+	sh scripts/run_k6_load.sh
+
+loadtest-200k: build
+	PROFILE=massive TARGET_REQUESTS=200000 VUS=120 MAX_DURATION=20m sh scripts/run_k6_load.sh
 
 $(TARGET): src/cli/main.c src/legacy/lexer.c src/legacy/parser.c src/legacy/bptree.c src/legacy/executor.c src/legacy/lexer.h src/legacy/parser.h src/legacy/bptree.h src/legacy/executor.h src/legacy/types.h
 	$(CC) $(CPPFLAGS) $(CFLAGS) src/cli/main.c -o $(TARGET)

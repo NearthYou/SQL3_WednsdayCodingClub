@@ -1,5 +1,5 @@
 id(PK),name(UK),zone(NN),kind,status
-1,HanBowl,seoul_east,korean,open
+1,HanBowl,seoul_east,korean,closed
 2,TacoLoop,seoul_east,mexican,open
 3,NoodlePort,default,asian,open
 4,SaladDock,default,healthy,closed

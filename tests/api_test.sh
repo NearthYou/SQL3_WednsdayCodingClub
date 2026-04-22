@@ -26,7 +26,9 @@ curl -s -X POST "http://127.0.0.1:${PORT}/api/v1/batch" \
 curl -s -X POST "http://127.0.0.1:${PORT}/api/v1/tx" \
   -H 'Content-Type: application/json' \
   -d '{"queries":["INSERT INTO cart VALUES (9, 9, 1, 7000)","INVALID SQL"]}' | grep '"code":"TX_ABORT"'
-curl -s "http://127.0.0.1:${PORT}/api/v1/page?user_id=1&lat=37.5&lng=127.0" | grep '"trace":'
+curl -s "http://127.0.0.1:${PORT}/api/v1/page?user_id=1&lat=37.5&lng=127.0" | grep '"start_ms":'
+curl -s "http://127.0.0.1:${PORT}/api/v1/page?user_id=1&lat=37.5&lng=127.0&mode=parallel&workers=2&delay_ms=10" | grep '"workers":2'
+curl -s "http://127.0.0.1:${PORT}/api/v1/page?user_id=1&lat=37.5&lng=127.0&mode=compare&delay_ms=10" | grep '"speedup":'
 curl -s "http://127.0.0.1:${PORT}/api/v1/metrics" | grep '"mvcc":'
 curl -s -X POST "http://127.0.0.1:${PORT}/api/v1/sql" -H 'Content-Type: application/json' -d '' | grep '"code":"BAD_REQ"'
 curl -s -X POST "http://127.0.0.1:${PORT}/api/v1/sql" -H 'Content-Type: application/json' -d '{' | grep '"code":"BAD_JSON"'
@@ -35,8 +37,8 @@ curl -s -X PUT "http://127.0.0.1:${PORT}/api/v1/health" | grep '"code":"BAD_METH
 curl -s "http://127.0.0.1:${PORT}/api/v1/nope" | grep '"code":"NO_ROUTE"'
 
 curl -s "http://127.0.0.1:${PORT}/demo" | grep '<!doctype html>'
-curl -s "http://127.0.0.1:${PORT}/demo.css" | grep 'race-board'
-curl -s "http://127.0.0.1:${PORT}/demo.js" | grep 'runConcurrencyRace'
+curl -s "http://127.0.0.1:${PORT}/demo.css" | grep 'compare-grid'
+curl -s "http://127.0.0.1:${PORT}/demo.js" | grep 'runLoadStep'
 curl -s -D /tmp/demo_headers.out -o /tmp/demo_body.out "http://127.0.0.1:${PORT}/demo" >/dev/null
 grep -i '^Content-Type: text/html; charset=utf-8' /tmp/demo_headers.out >/dev/null
 
@@ -71,12 +73,14 @@ def req(method, path, body=None, headers=None):
     payload = res.read().decode("utf-8")
     return res.status, payload
 
-sel_body = json.dumps({"query":"SELECT * FROM restaurants WHERE zone = 'seoul_east'"})
-upd_body = json.dumps({"query":"UPDATE restaurants SET status = 'open' WHERE id = 1"})
+sel_query = "SELECT * FROM restaurants WHERE id = 1" + (" " * ((int(time.time() * 1000) % 3) + 1))
+sel_body = json.dumps({"query": sel_query})
 h = {"Content-Type": "application/json"}
 
 status, body = req("POST", "/api/v1/sql", sel_body, h)
 assert status == 200 and '"ok":true' in body
+first = json.loads(body)
+assert first["meta"]["cache"]["status"] == "miss"
 
 status, body = req("GET", "/api/v1/metrics")
 assert status == 200
@@ -86,22 +90,41 @@ hit1 = data1["cache"]["hits"]
 
 status, body = req("POST", "/api/v1/sql", sel_body, h)
 assert status == 200 and '"ok":true' in body
+second = json.loads(body)
+assert second["meta"]["cache"]["status"] == "hit"
 status, body = req("GET", "/api/v1/metrics")
 data2 = json.loads(body)["data"]
 assert data2["cache"]["hits"] >= hit1 + 1
 assert data2["http"]["keep_alive_reuse"] >= 1
 
+row = first["data"]["rows"][0]
+from_status = row.get("status", "open")
+to_status = "closed" if from_status == "open" else "open"
+upd_body = json.dumps({"query":f"UPDATE restaurants SET status = '{to_status}' WHERE id = 1"})
+
 status, body = req("POST", "/api/v1/sql", upd_body, h)
 assert status == 200 and '"ok":true' in body
 status, body = req("POST", "/api/v1/sql", sel_body, h)
 assert status == 200 and '"ok":true' in body
+third = json.loads(body)
+assert third["meta"]["cache"]["status"] == "miss"
+assert third["meta"]["cache"]["reason"] == "version_changed"
 status, body = req("GET", "/api/v1/metrics")
 data3 = json.loads(body)["data"]
 assert data3["cache"]["misses"] >= miss1 + 1
 
-time.sleep(1.2)
-status, body = req("POST", "/api/v1/sql", sel_body, h)
-assert status == 200 and '"ok":true' in body
+deadline = time.time() + 8.0
+ttl_seen = False
+while time.time() < deadline:
+    status, body = req("POST", "/api/v1/sql", sel_body, h)
+    assert status == 200 and '"ok":true' in body
+    payload = json.loads(body)
+    if payload["meta"]["cache"]["reason"] == "ttl_expired":
+        ttl_seen = True
+        break
+    time.sleep(0.25)
+assert ttl_seen
+
 status, body = req("GET", "/api/v1/metrics")
 data4 = json.loads(body)["data"]
 assert data4["cache"]["misses"] >= data3["cache"]["misses"] + 1

@@ -292,6 +292,106 @@ body {
   color: var(--bad);
 }
 
+.compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: calc(10px * var(--scale));
+}
+
+.plain-block {
+  margin: 0;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #0f172a;
+  color: #d8e2f6;
+  padding: calc(10px * var(--scale));
+  font: calc(12px * var(--scale))/1.5 "Consolas", "Menlo", monospace;
+  min-height: calc(190px * var(--scale));
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.cache-grid {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.cache-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr)) minmax(0, 1.8fr);
+  gap: calc(6px * var(--scale));
+  padding: calc(8px * var(--scale));
+  border-bottom: 1px solid var(--line);
+  align-items: center;
+}
+
+.cache-row:last-child {
+  border-bottom: 0;
+}
+
+.cache-row p {
+  margin: 0;
+  font-size: calc(12px * var(--scale));
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
+.cache-row.head {
+  background: #f5f8ff;
+}
+
+.cache-row.head p {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.thread-graph {
+  display: grid;
+  gap: calc(8px * var(--scale));
+}
+
+.thread-row {
+  display: grid;
+  grid-template-columns: calc(120px * var(--scale)) 1fr calc(140px * var(--scale));
+  gap: calc(8px * var(--scale));
+  align-items: center;
+}
+
+.thread-row p {
+  margin: 0;
+  font-size: calc(12px * var(--scale));
+  color: var(--muted);
+}
+
+.thread-bar-bg {
+  height: calc(12px * var(--scale));
+  border-radius: 999px;
+  background: #e8eefb;
+  overflow: hidden;
+}
+
+.thread-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #2f6bff, #6aa0ff);
+}
+
+.load-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: calc(8px * var(--scale));
+}
+
+.load-grid {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  padding: calc(10px * var(--scale));
+  display: grid;
+  gap: calc(6px * var(--scale));
+}
+
 .race-board {
   display: grid;
   gap: calc(10px * var(--scale));
@@ -437,6 +537,22 @@ body {
 @media (max-width: 900px) {
   .scenario-step {
     min-height: 0;
+  }
+
+  .compare-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cache-row {
+    grid-template-columns: 1fr;
+  }
+
+  .thread-row {
+    grid-template-columns: 1fr;
+  }
+
+  .load-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .race-summary {

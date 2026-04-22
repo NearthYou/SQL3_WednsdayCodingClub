@@ -1,26 +1,38 @@
 # Mini DBMS API Server
 
-## 실행 방법
+기존 C 기반 SQL 처리기를 REST API 서버로 확장한 프로젝트입니다.
 
-```bash
-make
-./bin/dbsrv
-```
+## 핵심 구성
 
-기본 환경변수:
+- API 서버: `src/api`
+- 스레드 풀: `src/thr/pool.c`
+- DB 엔진: `src/db/dbapi.c`, `src/db/mvcc.c`
+- 인덱스: `src/legacy/bptree.c`
+- 데모 페이지: `web/demo.js`, `web/demo.css`
 
-```bash
-DBSV_PORT=8080
-API_THR=4
-DB_THR=4
-QUE_MAX=128
-MAX_BODY=1048576
-MAX_SQL=4096
-MAX_QRY=32
-DB_ROOT=data
-```
+## 현재 동시성 정책 (중요)
 
-## API 목록
+### 1) MVCC + optimistic commit
+
+- 읽기: snapshot 기준으로 일관성 보장
+- 쓰기: private working copy에 반영 후 commit 시 충돌 검사
+
+### 2) write retry
+
+- 쓰기 충돌 시 backoff 재시도
+- 설정 위치: `src/db/dbapi.c`
+  - `WRITE_RETRY_MAX`
+  - `WRITE_RETRY_BASE_US`
+  - `WRITE_RETRY_CAP_US`
+
+### 3) row-level write lock (table + id shard lock)
+
+- `/api/v1/sql` 단건 쓰기 경로에서 `table + id` 기준으로 락 샤딩
+- 같은 row(id) 동시 쓰기는 직렬화
+- 다른 id는 병렬 처리
+- 목적: 동시 쓰기 성공률 개선 (충돌성 쓰기 테스트에서 100% 성공 확인)
+
+## API
 
 - `GET /api/v1/health`
 - `POST /api/v1/sql`
@@ -29,64 +41,37 @@ DB_ROOT=data
 - `GET /api/v1/page`
 - `GET /api/v1/metrics`
 
-간단한 확인 예시:
+## 데모
+
+웹 데모는 단계별 시나리오를 제공합니다.
+
+- 5단계: 동시 요청 레벨(8/16/32) 비교
+- 6단계: 읽기/쓰기 혼합 부하
+  - `SELECT /api/v1/sql` 50%
+  - `UPDATE /api/v1/sql` 30%
+  - `GET /api/v1/page` 20%
+
+## 실행
 
 ```bash
-curl http://localhost:8080/api/v1/health
-
-curl -X POST http://localhost:8080/api/v1/sql \
-  -H "Content-Type: application/json" \
-  -d '{"query":"SELECT * FROM restaurants WHERE zone = '\''seoul_east'\''"}'
-
-curl "http://localhost:8080/api/v1/page?user_id=1&lat=37.5&lng=127.0"
-
-curl -X POST http://localhost:8080/api/v1/tx \
-  -H "Content-Type: application/json" \
-  -d '{"queries":["INSERT INTO cart VALUES (9, 9, 1, 7000)","INVALID SQL"]}'
-
-curl http://localhost:8080/api/v1/metrics
+make build
+./bin/dbsrv
 ```
 
-자세한 명세는 [docs/API.md](/Users/jungilyou/Documents/GitHub/SQL3_WednsdayCodingClub/docs/API.md) 에 정리했습니다.
+또는 Docker:
 
-## Thread Pool 구조
+```bash
+docker build -t sqlprocessor:local .
+docker run --rm -p 8080:8080 sqlprocessor:local ./bin/dbsrv
+```
 
-서버는 요청마다 새 스레드를 만들지 않고, 두 개의 고정 크기 풀을 사용합니다.
-
-- API Worker Pool: HTTP 요청 수신 후 라우팅과 응답 생성 담당
-- DB Query Pool: `/page`, all-read `/batch` 같은 병렬 조회 SQL 처리 담당
-
-이렇게 분리한 이유는 API worker가 같은 풀에 SQL 작업을 넣고 기다리다가 교착되는 구조를 피하기 위해서입니다.
-
-## MVCC 동시성 제어
-
-table-snapshot copy-on-write MVCC
-
-- 읽기 요청은 시작 시 snapshot id를 잡고 그 시점의 committed version만 봅니다.
-- 쓰기 요청은 처음 write가 발생할 때 해당 table의 visible version을 private copy로 복제합니다.
-- commit 시점에는 시작 시점의 base version과 현재 head가 같은지 검사합니다.
-- 같으면 새 committed version으로 install하고, 다르면 write conflict로 abort합니다.
-- rollback은 private working copy 폐기로 처리합니다.
-
-이 방식은 row-chain full MVCC보다 단순하지만, 현재 CSV 엔진 구조와 발표 설명에는 훨씬 잘 맞습니다.
-
-## Transaction rollback 방식
-
-트랜잭션 요청은 private working copy 기반으로 동작합니다.
-
-- 성공: 새 committed table version 설치
-- 실패: working copy 폐기
-- partial write rollback: 파일 백업 없이 메모리 working copy 폐기로 해결
-
-Durability는 전체 DBMS/WAL 수준이 아니라, 현재 CSV flush가 끝난 시점까지로 제한됩니다.
-
-## 테스트 방법
+## 테스트
 
 ```bash
 make test
 ```
 
-포함된 테스트:
+테스트 파일:
 
 - `tests/test_pool.c`
 - `tests/test_mvcc.c`
@@ -94,15 +79,3 @@ make test
 - `tests/test_tx.c`
 - `tests/api_test.sh`
 
-보조 스크립트:
-
-```bash
-./scripts/run.sh
-./scripts/load.sh
-```
-
-## 차별점
-
-- table-snapshot copy-on-write MVCC로 snapshot consistency와 rollback을 구현한 점
-- API Worker Pool과 DB Query Pool을 분리해 deadlock 위험을 낮춘 점
-- `/api/v1/page` 와 `/api/v1/metrics` 로 병렬 실행과 내부 상태를 눈으로 보여줄 수 있는 점

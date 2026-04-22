@@ -1,15 +1,5 @@
 # Mini DBMS API Server
 
-기존 C 기반 미니 DBMS CLI 프로젝트를 확장해, REST API로 CRUD를 호출할 수 있는 서버를 추가한 버전입니다.
-
-핵심 변화는 세 가지입니다.
-
-- 기존 `sqlsprocessor` CLI는 그대로 유지
-- 새 서버 바이너리 `./bin/dbsrv` 추가
-- 동시성 제어를 table-snapshot copy-on-write MVCC로 구성
-
-기존 CLI 엔진의 강점이었던 CSV 기반 저장, PK/UK 인덱스, delta log / `.idx` snapshot 관점의 “엔진스러운” 구조는 유지하면서, 외부 클라이언트가 실제 HTTP 요청으로 기능을 사용할 수 있게 만들었습니다.
-
 ## 실행 방법
 
 ```bash
@@ -29,21 +19,6 @@ MAX_SQL=4096
 MAX_QRY=32
 DB_ROOT=data
 ```
-
-기존 CLI 실행도 그대로 가능합니다.
-
-```bash
-./sqlsprocessor sql/legacy/demo_bptree.sql
-```
-
-정리된 폴더 구조:
-
-- legacy CLI entry: `src/cli/main.c`
-- legacy engine: `src/legacy`
-- API/MVCC server: `src/api`, `src/db`, `src/thr`
-- legacy SQL scenarios: `sql/legacy`
-- legacy fixtures: `data/legacy`
-- bench tools: `tools/bench`
 
 ## API 목록
 
@@ -74,17 +49,6 @@ curl http://localhost:8080/api/v1/metrics
 
 자세한 명세는 [docs/API.md](/Users/jungilyou/Documents/GitHub/SQL3_WednsdayCodingClub/docs/API.md) 에 정리했습니다.
 
-## 데모 시나리오
-
-1. `./bin/dbsrv` 실행
-2. `/api/v1/health` 로 서버 확인
-3. `/api/v1/sql` 로 기존 SQL 처리기 연동 확인
-4. `/api/v1/page` 로 하나의 페이지 요청이 4개 SQL로 분해되어 병렬 실행되는 모습 시연
-5. `/api/v1/metrics` 로 API pool / DB pool / MVCC 상태 확인
-6. `/api/v1/tx` 로 rollback 시연
-
-상세 순서는 [docs/DEMO.md](/Users/jungilyou/Documents/GitHub/SQL3_WednsdayCodingClub/docs/DEMO.md) 를 참고하면 됩니다.
-
 ## Thread Pool 구조
 
 서버는 요청마다 새 스레드를 만들지 않고, 두 개의 고정 크기 풀을 사용합니다.
@@ -96,7 +60,7 @@ curl http://localhost:8080/api/v1/metrics
 
 ## MVCC 동시성 제어
 
-기존 RW Lock 계획은 table-snapshot copy-on-write MVCC로 바꿨습니다.
+table-snapshot copy-on-write MVCC
 
 - 읽기 요청은 시작 시 snapshot id를 잡고 그 시점의 committed version만 봅니다.
 - 쓰기 요청은 처음 write가 발생할 때 해당 table의 visible version을 private copy로 복제합니다.
@@ -137,10 +101,8 @@ make test
 ./scripts/load.sh
 ```
 
-## 포트폴리오 어필 포인트
+## 차별점
 
-- 단순 CRUD 서버가 아니라, 기존 C 기반 SQL 엔진을 API 계층과 분리해 재사용 가능하게 만든 점
 - table-snapshot copy-on-write MVCC로 snapshot consistency와 rollback을 구현한 점
 - API Worker Pool과 DB Query Pool을 분리해 deadlock 위험을 낮춘 점
 - `/api/v1/page` 와 `/api/v1/metrics` 로 병렬 실행과 내부 상태를 눈으로 보여줄 수 있는 점
-- 비교 문서 [docs/COMPARE.md](/Users/jungilyou/Documents/GitHub/SQL3_WednsdayCodingClub/docs/COMPARE.md) 에 baseline 대비 장단점과 점수표를 정리한 점

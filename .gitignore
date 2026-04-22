@@ -1,55 +1,25 @@
-# Prerequisites
-*.d
-
-# Object files
+sqlsprocessor
+main
 *.o
-*.ko
-*.obj
-*.elf
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Libraries
-*.lib
-*.a
-*.la
-*.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-
-# Executables
 *.exe
-*.out
-*.app
-*.i*86
-*.x86_64
-*.hex
-
-# Debug files
 *.dSYM/
-*.su
-*.idb
-*.pdb
-
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
-
-# debug information files
-*.dwo
+over_million_users.csv
+bptree_test_users.csv
+bptree_test.sql
+over_million_test.sql
+lru_*.csv
+lru_test.sql
+uk_*_users.csv
+uk_*_test.sql
+uk_test_users.csv
+uk_test.sql
+generated_sql/
+artifacts/
+*.delta
+*.idx
+bptree_benchmark_users.csv
+bptree_perf_users.csv
+jungle_benchmark_users.csv
+bench_workload_generator
+benchmark_runner
+bench_formula_test

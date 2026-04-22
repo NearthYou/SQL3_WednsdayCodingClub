@@ -24,10 +24,10 @@
 
 ```mermaid
 flowchart LR
-    A["SQL file<br/>; 기준 문장 분리"] --> B["main.c<br/>execute_sql_text()"]
-    B --> C["lexer.c<br/>문자열 -> Token"]
-    C --> D["parser.c<br/>Token -> Statement"]
-    D --> E["executor.c<br/>실행 라우터"]
+    A["SQL file<br/>; 기준 문장 분리"] --> B["src/main.c<br/>execute_sql_text()"]
+    B --> C["src/lexer.c<br/>문자열 -> Token"]
+    C --> D["src/parser.c<br/>Token -> Statement"]
+    D --> E["src/executor.c<br/>실행 라우터"]
 
     E --> F["get_table()<br/>CSV 캐시 조회/로드"]
     F --> G["load_table_contents()<br/>header 파싱<br/>records[] 적재<br/>bulk-build"]

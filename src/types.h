@@ -96,6 +96,7 @@ typedef struct {
 /* 테이블 한 개를 메모리에 적재해 관리하는 캐시 구조입니다. */
 typedef struct {
     char table_name[256];         /* users 형태 이름 */
+    char csv_filename[300];       /* 실제 CSV 파일 경로 */
     FILE *file;                   /* 현재 열려 있는 CSV 파일 포인터 */
     FILE *delta_file;             /* append-only delta log writer */
     int delta_batch_open;          /* 현재 delta batch가 B만 쓰고 E 대기 중인지 */
@@ -190,5 +191,4 @@ extern TableCache open_tables[MAX_TABLES];
 extern int open_table_count;
 
 #endif
-
 

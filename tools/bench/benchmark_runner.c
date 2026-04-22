@@ -458,13 +458,13 @@ int main(int argc, char **argv) {
 
     if (opt.memtrack) {
 #if defined(_WIN32)
-        rc = system("gcc -O2 -fdiagnostics-color=always -g -DBENCH_MEMTRACK main.c -o sqlsprocessor.exe");
+        rc = system("gcc -O2 -fdiagnostics-color=always -g -DBENCH_MEMTRACK src/main.c -o sqlsprocessor.exe");
 #else
         rc = system("make -B build CFLAGS='-O2 -fdiagnostics-color=always -g -DBENCH_MEMTRACK'");
 #endif
     } else {
 #if defined(_WIN32)
-        rc = system("gcc -O2 -fdiagnostics-color=always -g main.c -o sqlsprocessor.exe");
+        rc = system("gcc -O2 -fdiagnostics-color=always -g src/main.c -o sqlsprocessor.exe");
 #else
         rc = system("make -B build CFLAGS='-O2 -fdiagnostics-color=always -g'");
 #endif

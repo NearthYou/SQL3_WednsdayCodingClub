@@ -22,7 +22,7 @@
             "id": "sqlFile",
             "type": "promptString",
             "description": "실행할 SQL 파일 이름 또는 경로",
-            "default": "demo_select.sql"
+            "default": "examples/sql/demo_bptree.sql"
         }
     ]
 }

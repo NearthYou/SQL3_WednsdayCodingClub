@@ -25,17 +25,17 @@
 
 ### 역할 기준 모듈
 
-- `main.c`
+- `src/main.c`
   - SQL 파일을 읽고 문장을 순서대로 실행한다.
   - `--benchmark` 모드도 여기서 시작한다.
-- `lexer.c`
+- `src/lexer.c`
   - SQL 문자열을 토큰 단위로 자른다.
-- `parser.c`
+- `src/parser.c`
   - 토큰 흐름을 `Statement` 구조체로 바꾼다.
-- `executor.c`
+- `src/executor.c`
   - 실제 테이블을 열고, 메모리 캐시를 유지하고, CRUD를 수행한다.
   - 여기서 B+ tree 인덱스를 사용하거나 다시 만든다.
-- `bptree.c`
+- `src/bptree.c`
   - 숫자 PK용 B+ tree와 문자열 UK용 B+ tree를 제공한다.
 
 ## 3. 프로그램 전체 흐름 의사코드

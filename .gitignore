@@ -17,6 +17,7 @@ generated_sql/
 artifacts/
 *.delta
 *.idx
+*.tmp
 bptree_benchmark_users.csv
 bptree_perf_users.csv
 jungle_benchmark_users.csv

@@ -2,10 +2,10 @@
 
 ```mermaid
 flowchart TD
-    A["main.c<br/>SQL 파일 열기"] --> B["문장 분리<br/>주석 제거, ; 기준 분리"]
-    B --> C["lexer.c<br/>토큰화"]
-    C --> D["parser.c<br/>Statement 생성"]
-    D --> E["executor.c<br/>get_table로 CSV 캐시 로드"]
+    A["src/main.c<br/>SQL 파일 열기"] --> B["문장 분리<br/>주석 제거, ; 기준 분리"]
+    B --> C["src/lexer.c<br/>토큰화"]
+    C --> D["src/parser.c<br/>Statement 생성"]
+    D --> E["src/executor.c<br/>get_table로 CSV 캐시 로드"]
     E --> F{"문장 종류"}
     F --> G["SELECT<br/>캐시 조회 후 출력"]
     F --> H["INSERT<br/>제약 검사 후 추가"]

@@ -12,14 +12,15 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-mkdir -p "$bench_dir"
+mkdir -p "$bench_dir/src"
+mkdir -p "$bench_dir/tools/bench"
 mkdir -p "$repo_dir/artifacts/bench"
 
 for file in \
     Makefile \
-    main.c lexer.c parser.c bptree.c executor.c \
-    lexer.h parser.h bptree.h executor.h types.h \
-    bench_workload_generator.c benchmark_runner.c bench_formula_test.c
+    src/main.c src/lexer.c src/parser.c src/bptree.c src/executor.c \
+    src/lexer.h src/parser.h src/bptree.h src/executor.h src/types.h \
+    tools/bench/bench_workload_generator.c tools/bench/benchmark_runner.c tools/bench/bench_formula_test.c
 do
     cp "$repo_dir/$file" "$bench_dir/$file"
 done

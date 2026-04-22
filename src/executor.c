@@ -61,7 +61,7 @@ static int close_delta_batch(TableCache *tc);
 static int load_index_snapshot(TableCache *tc);
 static int save_index_snapshot(TableCache *tc);
 static void remove_index_snapshot(TableCache *tc);
-static int load_table_contents(TableCache *tc, const char *name, FILE *f);
+static int load_table_contents(TableCache *tc, const char *name, FILE *f, const char *csv_filename);
 static int execute_update_single_row(TableCache *tc, Statement *stmt, int where_idx,
                                      const WhereCondition *lookup_cond, int set_idx, const char *set_value, int uses_pk_lookup,
                                      int uses_uk_lookup, int rebuild_uk_needed);
@@ -92,6 +92,36 @@ static int path_exists(const char *filename) {
     struct stat st;
 
     return filename && stat(filename, &st) == 0;
+}
+
+static void resolve_table_csv_filename(const char *table_name, char *filename, size_t filename_size) {
+    char fallback[300];
+
+    snprintf(filename, filename_size, "%s.csv", table_name ? table_name : "");
+    if (path_exists(filename)) return;
+
+    snprintf(fallback, sizeof(fallback), "examples/data/%s.csv", table_name ? table_name : "");
+    if (path_exists(fallback)) {
+        snprintf(filename, filename_size, "%s", fallback);
+    }
+}
+
+static void get_csv_filename(TableCache *tc, char *filename, size_t filename_size) {
+    if (tc && tc->csv_filename[0]) {
+        snprintf(filename, filename_size, "%s", tc->csv_filename);
+        return;
+    }
+    snprintf(filename, filename_size, "%s.csv", tc ? tc->table_name : "");
+}
+
+static void get_sidecar_filename(TableCache *tc, char *filename, size_t filename_size, const char *extension) {
+    char csv_filename[300];
+    char *dot;
+
+    get_csv_filename(tc, csv_filename, sizeof(csv_filename));
+    dot = strrchr(csv_filename, '.');
+    if (dot && strcmp(dot, ".csv") == 0) *dot = '\0';
+    snprintf(filename, filename_size, "%s%s", csv_filename, extension);
 }
 
 static int clamp_record_count(int record_count, int minimum) {
@@ -1294,7 +1324,7 @@ typedef struct {
 } DeltaOp;
 
 static void get_delta_filename(TableCache *tc, char *filename, size_t filename_size) {
-    snprintf(filename, filename_size, "%s.delta", tc->table_name);
+    get_sidecar_filename(tc, filename, filename_size, ".delta");
 }
 
 static int delta_log_exists(TableCache *tc) {
@@ -1769,7 +1799,7 @@ int rewrite_file(TableCache *tc) {
     tc->file = NULL;
     strncpy(table_name, tc->table_name, sizeof(table_name) - 1);
     table_name[sizeof(table_name) - 1] = '\0';
-    snprintf(filename, sizeof(filename), "%s.csv", tc->table_name);
+    get_csv_filename(tc, filename, sizeof(filename));
     snprintf(temp_filename, sizeof(temp_filename), "%s.tmp", filename);
 
     out = fopen(temp_filename, "wb");
@@ -1802,7 +1832,7 @@ int rewrite_file(TableCache *tc) {
     clear_delta_log(tc);
     remove_index_snapshot(tc);
     discard_table_cache_for_reload(tc);
-    return load_table_contents(tc, table_name, tc->file);
+    return load_table_contents(tc, table_name, tc->file, filename);
 
 fail:
     fclose(out);
@@ -1819,7 +1849,7 @@ static int compact_table_file_for_shutdown(TableCache *tc) {
     int i;
 
     if (!tc || !tc->file) return 1;
-    snprintf(filename, sizeof(filename), "%s.csv", tc->table_name);
+    get_csv_filename(tc, filename, sizeof(filename));
     snprintf(temp_filename, sizeof(temp_filename), "%s.tmp", filename);
     get_delta_filename(tc, delta_filename, sizeof(delta_filename));
 
@@ -2210,7 +2240,7 @@ static FileStamp get_file_stamp(const char *filename) {
 }
 
 static void get_index_filename(TableCache *tc, char *filename, size_t filename_size) {
-    snprintf(filename, filename_size, "%s.idx", tc->table_name);
+    get_sidecar_filename(tc, filename, filename_size, ".idx");
 }
 
 static void remove_index_snapshot(TableCache *tc) {
@@ -2311,7 +2341,7 @@ static int save_index_snapshot(TableCache *tc) {
 
     get_index_filename(tc, filename, sizeof(filename));
     snprintf(temp_filename, sizeof(temp_filename), "%s.tmp", filename);
-    snprintf(csv_filename, sizeof(csv_filename), "%s.csv", tc->table_name);
+    get_csv_filename(tc, csv_filename, sizeof(csv_filename));
     get_delta_filename(tc, delta_filename, sizeof(delta_filename));
     csv_stamp = get_file_stamp(csv_filename);
     delta_stamp = get_file_stamp(delta_filename);
@@ -2408,7 +2438,7 @@ static int load_index_snapshot(TableCache *tc) {
     if (!f) return 0;
     setvbuf(f, NULL, _IOFBF, TABLE_FILE_BUFFER_SIZE);
 
-    snprintf(csv_filename, sizeof(csv_filename), "%s.csv", tc->table_name);
+    get_csv_filename(tc, csv_filename, sizeof(csv_filename));
     get_delta_filename(tc, delta_filename, sizeof(delta_filename));
     csv_stamp = get_file_stamp(csv_filename);
     delta_stamp = get_file_stamp(delta_filename);
@@ -2603,7 +2633,7 @@ static int load_table_parse_snapshot(TableCache *tc) {
     if (!f) return 0;
     setvbuf(f, NULL, _IOFBF, TABLE_FILE_BUFFER_SIZE);
 
-    snprintf(csv_filename, sizeof(csv_filename), "%s.csv", tc->table_name);
+    get_csv_filename(tc, csv_filename, sizeof(csv_filename));
     get_delta_filename(tc, delta_filename, sizeof(delta_filename));
     csv_stamp = get_file_stamp(csv_filename);
     delta_stamp = get_file_stamp(delta_filename);
@@ -2785,7 +2815,7 @@ fail:
     return 0;
 }
 
-static int load_table_contents(TableCache *tc, const char *name, FILE *f) {
+static int load_table_contents(TableCache *tc, const char *name, FILE *f, const char *csv_filename) {
     char header[RECORD_SIZE];
     char line[RECORD_SIZE];
     long line_number = 1;
@@ -2795,6 +2825,7 @@ static int load_table_contents(TableCache *tc, const char *name, FILE *f) {
     reset_table_cache(tc);
     if (!tc->id_index) return 0;
     strncpy(tc->table_name, name, sizeof(tc->table_name) - 1);
+    snprintf(tc->csv_filename, sizeof(tc->csv_filename), "%s", csv_filename ? csv_filename : "");
     tc->file = f;
     touch_table(tc);
     has_delta_log = delta_log_exists(tc);
@@ -2958,7 +2989,7 @@ TableCache *get_table(const char *name) {
         }
     }
 
-    snprintf(filename, sizeof(filename), "%s.csv", name);
+    resolve_table_csv_filename(name, filename, sizeof(filename));
     f = fopen(filename, "r+b");
     if (!f) {
         printf("[notice] '%s.csv' does not exist.\n", name);
@@ -2974,7 +3005,7 @@ TableCache *get_table(const char *name) {
         free_table_storage(tc);
     }
 
-    if (!load_table_contents(tc, name, f)) {
+    if (!load_table_contents(tc, name, f, filename)) {
         free_table_storage(tc);
         if (tc == &open_tables[open_table_count - 1]) open_table_count--;
         return NULL;
@@ -2990,13 +3021,13 @@ static int reload_table_cache(TableCache *tc) {
     if (!tc) return 0;
     strncpy(table_name, tc->table_name, sizeof(table_name) - 1);
     table_name[sizeof(table_name) - 1] = '\0';
-    snprintf(filename, sizeof(filename), "%s.csv", table_name);
+    get_csv_filename(tc, filename, sizeof(filename));
 
     free_table_storage(tc);
     f = fopen(filename, "r+b");
     if (!f) return 0;
     setvbuf(f, NULL, _IOFBF, TABLE_FILE_BUFFER_SIZE);
-    return load_table_contents(tc, table_name, f);
+    return load_table_contents(tc, table_name, f, filename);
 }
 
 static int build_insert_row(TableCache *tc, char *vals[MAX_COLS], int val_count, long *id_value, char *new_line, size_t line_size) {
@@ -3809,7 +3840,7 @@ static int rewrite_truncated_update(TableCache *tc, Statement *stmt,
         return 0;
     }
 
-    snprintf(filename, sizeof(filename), "%s.csv", tc->table_name);
+    get_csv_filename(tc, filename, sizeof(filename));
     snprintf(temp_filename, sizeof(temp_filename), "%s.tmp", filename);
     out = fopen(temp_filename, "wb");
     if (!out) return 0;
@@ -3873,7 +3904,7 @@ static int rewrite_truncated_delete(TableCache *tc, Statement *stmt) {
     int count = 0;
 
     if (!tc || !tc->file) return 0;
-    snprintf(filename, sizeof(filename), "%s.csv", tc->table_name);
+    get_csv_filename(tc, filename, sizeof(filename));
     snprintf(temp_filename, sizeof(temp_filename), "%s.tmp", filename);
     out = fopen(temp_filename, "wb");
     if (!out) return 0;

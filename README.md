@@ -6,10 +6,25 @@ C 기반 SQL 처리기입니다. CSV 파일을 테이블처럼 사용하며 `INS
 
 현재 메모리 기반 구현의 안전 상한은 2,000,000건입니다. CSV가 이 상한을 넘으면 앞쪽 2,000,000건만 `TableCache`에 캐시하고, 이후 row는 CSV에 남겨 둔 채 tail scan fallback으로 처리합니다.
 
+## 폴더 구조
+
+```text
+src/              SQL 처리기 C 소스와 헤더
+tools/bench/      벤치마크 생성기/러너/검증 도구
+examples/sql/     데모와 회귀 시나리오 SQL
+examples/data/    데모와 회귀 시나리오용 작은 CSV 샘플
+scripts/          워크로드 생성/벤치 실행 보조 스크립트
+docs/             설계와 발표용 문서
+generated_sql/    생성되는 대용량 SQL 출력물(.gitignore)
+artifacts/        벤치마크 리포트 출력물(.gitignore)
+```
+
+엔진은 먼저 현재 폴더의 `<테이블명>.csv`를 찾고, 없으면 `examples/data/<테이블명>.csv`를 자동으로 찾아 예제 SQL을 실행합니다. 새로 생성되는 대용량/런타임 CSV는 기존처럼 프로젝트 루트에 만들어집니다.
+
 ## 빌드
 
 ```powershell
-gcc -O2 main.c -o sqlsprocessor.exe
+gcc -O2 src/main.c -o sqlsprocessor.exe
 ```
 
 `make`가 있는 환경에서는 기존 Makefile도 사용할 수 있습니다.
@@ -21,14 +36,14 @@ make
 ## 기본 실행
 
 ```powershell
-.\sqlsprocessor.exe demo_bptree.sql
+.\sqlsprocessor.exe examples/sql/demo_bptree.sql
 ```
 
 SQL 파일은 세미콜론(`;`)으로 문장을 구분합니다.
 
 ## 기존 B+ Tree 데모
 
-기본 샘플은 `case_basic_users.csv` 와 `demo_bptree.sql` 입니다.
+기본 샘플은 `examples/data/case_basic_users.csv` 와 `examples/sql/demo_bptree.sql` 입니다.
 
 ```sql
 SELECT * FROM case_basic_users WHERE id = 4;
@@ -103,7 +118,7 @@ id(PK),email(UK),phone(UK),name,track(NN),background,history,pretest,github,stat
 ### 정글 발표 데모
 
 ```powershell
-.\sqlsprocessor.exe demo_jungle.sql
+.\sqlsprocessor.exe examples/sql/demo_jungle.sql
 ```
 
 또는
@@ -112,7 +127,7 @@ id(PK),email(UK),phone(UK),name,track(NN),background,history,pretest,github,stat
 make demo-jungle
 ```
 
-`demo_jungle.sql` 은 100만 건 테이블에서 아래 조회 경로를 보여줍니다.
+`examples/sql/demo_jungle.sql` 은 100만 건 테이블에서 아래 조회 경로를 보여줍니다.
 
 - `id`: PK B+ Tree
 - `email`: UK B+ Tree
@@ -121,26 +136,26 @@ make demo-jungle
 
 ## 정글 추가 시나리오
 
-작은 확인용 테이블 `jungle_test_users.csv` 로 반복 가능한 추가 시나리오를 제공합니다.
+작은 확인용 테이블 `examples/data/jungle_test_users.csv` 로 반복 가능한 추가 시나리오를 제공합니다.
 
 ```powershell
-.\sqlsprocessor.exe scenario_jungle_regression.sql
-.\sqlsprocessor.exe scenario_jungle_range_and_replay.sql
-.\sqlsprocessor.exe scenario_jungle_update_constraints.sql
+.\sqlsprocessor.exe examples/sql/scenario_jungle_regression.sql
+.\sqlsprocessor.exe examples/sql/scenario_jungle_range_and_replay.sql
+.\sqlsprocessor.exe examples/sql/scenario_jungle_update_constraints.sql
 ```
 
 각 시나리오의 확인 항목:
 
-- `scenario_jungle_regression.sql`
+- `examples/sql/scenario_jungle_regression.sql`
   - PK/UK exact lookup
   - 비인덱스 컬럼 선형 탐색
   - UPDATE/DELETE 기초 동작
   - duplicate PK / duplicate email / duplicate phone / NN 제약
-- `scenario_jungle_range_and_replay.sql`
+- `examples/sql/scenario_jungle_range_and_replay.sql`
   - PK/UK range lookup
   - UK 기준 UPDATE/DELETE
   - 다른 테이블 재오픈 후 delta replay
-- `scenario_jungle_update_constraints.sql`
+- `examples/sql/scenario_jungle_update_constraints.sql`
   - duplicate UK UPDATE 거부
   - NN 컬럼 빈 문자열 UPDATE 거부
   - PK UPDATE 거부
@@ -172,11 +187,11 @@ make generate-jungle-sql
 
 ```powershell
 .\sqlsprocessor.exe generated_sql/jungle_insert_1000000.sql
-.\sqlsprocessor.exe scenario_jungle_workload_after_insert.sql
+.\sqlsprocessor.exe examples/sql/scenario_jungle_workload_after_insert.sql
 .\sqlsprocessor.exe generated_sql/jungle_update_1000000.sql
-.\sqlsprocessor.exe scenario_jungle_workload_after_update.sql
+.\sqlsprocessor.exe examples/sql/scenario_jungle_workload_after_update.sql
 .\sqlsprocessor.exe generated_sql/jungle_delete_1000000.sql
-.\sqlsprocessor.exe scenario_jungle_workload_after_delete.sql
+.\sqlsprocessor.exe examples/sql/scenario_jungle_workload_after_delete.sql
 ```
 
 ## 정글 SQL 경로 벤치마크

@@ -121,7 +121,7 @@
 
 | 무엇을 바꾸는가 | 같이 바꿔야 하는 것 |
 |---|---|
-| 단일 테이블에서 JOIN 구조로 변경 | `types.h`, `parser.c`, `executor.c`, 테스트 쿼리, DS5 생성 규칙 |
+| 단일 테이블에서 JOIN 구조로 변경 | `src/types.h`, `src/parser.c`, `src/executor.c`, 테스트 쿼리, DS5 생성 규칙 |
 | ship_id 인덱스를 빼고 id만 유지 | suspicious ship exact lookup 설명, ship_id 조회 성능 기준 |
 | hash index로 변경 | range search 설계, DS7 의미, EXPLAIN 문구 |
 | EXPLAIN 제거 | 인덱스 사용 검증 20점 채점 방식 |

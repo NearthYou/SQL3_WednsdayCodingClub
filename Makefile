@@ -1,12 +1,29 @@
 CC ?= gcc
 CFLAGS ?= -O2 -fdiagnostics-color=always -g
 TARGET ?= sqlsprocessor
+
+SRC_DIR := src
+BENCH_DIR := tools/bench
+EXAMPLE_SQL_DIR := examples/sql
+
 BENCH_GEN ?= bench_workload_generator
 BENCH_RUNNER ?= benchmark_runner
 BENCH_TEST ?= bench_formula_test
-SRC = main.c
-SRC_DEPS = main.c lexer.c parser.c bptree.c executor.c lexer.h parser.h bptree.h executor.h types.h
-SQL ?= demo_bptree.sql
+
+SRC = $(SRC_DIR)/main.c
+SRC_DEPS = \
+	$(SRC_DIR)/main.c \
+	$(SRC_DIR)/lexer.c \
+	$(SRC_DIR)/parser.c \
+	$(SRC_DIR)/bptree.c \
+	$(SRC_DIR)/executor.c \
+	$(SRC_DIR)/lexer.h \
+	$(SRC_DIR)/parser.h \
+	$(SRC_DIR)/bptree.h \
+	$(SRC_DIR)/executor.h \
+	$(SRC_DIR)/types.h
+
+SQL ?= $(EXAMPLE_SQL_DIR)/demo_bptree.sql
 PYTHON ?= python
 JUNGLE_DATASET ?= jungle_benchmark_users.csv
 JUNGLE_RECORDS ?= 1000000
@@ -25,14 +42,14 @@ $(TARGET): $(SRC_DEPS)
 
 bench-tools: $(BENCH_GEN) $(BENCH_RUNNER)
 
-$(BENCH_GEN): bench_workload_generator.c
-	$(CC) $(CFLAGS) bench_workload_generator.c -o $(BENCH_GEN)
+$(BENCH_GEN): $(BENCH_DIR)/bench_workload_generator.c
+	$(CC) $(CFLAGS) $< -o $(BENCH_GEN)
 
-$(BENCH_RUNNER): benchmark_runner.c
-	$(CC) $(CFLAGS) benchmark_runner.c -o $(BENCH_RUNNER)
+$(BENCH_RUNNER): $(BENCH_DIR)/benchmark_runner.c
+	$(CC) $(CFLAGS) $< -o $(BENCH_RUNNER)
 
-$(BENCH_TEST): bench_formula_test.c
-	$(CC) $(CFLAGS) bench_formula_test.c -o $(BENCH_TEST)
+$(BENCH_TEST): $(BENCH_DIR)/bench_formula_test.c
+	$(CC) $(CFLAGS) $< -o $(BENCH_TEST)
 
 bench-test: $(BENCH_TEST)
 	./$(BENCH_TEST)
@@ -44,19 +61,19 @@ run: $(TARGET)
 	./$(TARGET) $(SQL)
 
 demo-bptree: $(TARGET)
-	./$(TARGET) demo_bptree.sql
+	./$(TARGET) $(EXAMPLE_SQL_DIR)/demo_bptree.sql
 
 demo-jungle: $(TARGET) $(JUNGLE_DATASET)
-	./$(TARGET) demo_jungle.sql
+	./$(TARGET) $(EXAMPLE_SQL_DIR)/demo_jungle.sql
 
 scenario-jungle-regression: $(TARGET)
-	./$(TARGET) scenario_jungle_regression.sql
+	./$(TARGET) $(EXAMPLE_SQL_DIR)/scenario_jungle_regression.sql
 
 scenario-jungle-range-and-replay: $(TARGET)
-	./$(TARGET) scenario_jungle_range_and_replay.sql
+	./$(TARGET) $(EXAMPLE_SQL_DIR)/scenario_jungle_range_and_replay.sql
 
 scenario-jungle-update-constraints: $(TARGET)
-	./$(TARGET) scenario_jungle_update_constraints.sql
+	./$(TARGET) $(EXAMPLE_SQL_DIR)/scenario_jungle_update_constraints.sql
 
 generate-jungle: $(JUNGLE_DATASET)
 

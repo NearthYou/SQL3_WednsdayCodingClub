@@ -35,8 +35,8 @@ curl -s -X PUT "http://127.0.0.1:${PORT}/api/v1/health" | grep '"code":"BAD_METH
 curl -s "http://127.0.0.1:${PORT}/api/v1/nope" | grep '"code":"NO_ROUTE"'
 
 curl -s "http://127.0.0.1:${PORT}/demo" | grep '<!doctype html>'
-curl -s "http://127.0.0.1:${PORT}/demo.css" | grep 'metrics-grid'
-curl -s "http://127.0.0.1:${PORT}/demo.js" | grep 'const STEPS'
+curl -s "http://127.0.0.1:${PORT}/demo.css" | grep 'race-board'
+curl -s "http://127.0.0.1:${PORT}/demo.js" | grep 'runConcurrencyRace'
 curl -s -D /tmp/demo_headers.out -o /tmp/demo_body.out "http://127.0.0.1:${PORT}/demo" >/dev/null
 grep -i '^Content-Type: text/html; charset=utf-8' /tmp/demo_headers.out >/dev/null
 

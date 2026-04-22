@@ -3,61 +3,32 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Mini DBMS Demo</title>
+  <title>Mini DBMS 시연 페이지</title>
   <link rel="stylesheet" href="/demo.css">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">Mini DBMS</div>
-    <div class="badge" id="server-badge">Server: unknown</div>
+    <div class="brand">Mini DBMS 시연</div>
+    <div class="badge" id="server-badge">서버 상태: 확인 전</div>
   </header>
   <main class="shell">
     <section class="hero">
       <p class="eyebrow">Live API Demo</p>
-      <h1>Step-by-step scenario for presentation</h1>
-      <p class="summary">Run each step and inspect request, response, trace, and metrics.</p>
+      <h1>눈으로 바로 보이는 단계형 시연</h1>
+      <p class="summary">요약 카드 + 상태 변화 + 콘솔 로그 중심으로 구성했습니다.</p>
     </section>
 
-    <section class="steps" id="steps"></section>
+    <section class="scenario-list" id="scenario-list"></section>
 
-    <section class="viewer">
-      <article class="panel">
-        <h2>Request</h2>
-        <pre id="request-view" class="code"></pre>
-      </article>
-      <article class="panel">
-        <div class="panel-head">
-          <h2>Response</h2>
-          <div class="meta">
-            <span class="state idle" id="response-state">IDLE</span>
-            <span id="response-latency">-</span>
-          </div>
-        </div>
-        <pre id="response-view" class="code"></pre>
-      </article>
-    </section>
-
-    <section class="insights">
-      <article class="panel hidden" id="trace-panel">
-        <h2>Page Trace</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Thread</th>
-              <th>Latency (ms)</th>
-              <th>OK</th>
-            </tr>
-          </thead>
-          <tbody id="trace-body"></tbody>
-        </table>
-      </article>
-      <article class="panel hidden" id="metrics-panel">
-        <h2>Metrics Snapshot</h2>
-        <div class="metrics-grid" id="metrics-grid"></div>
-      </article>
+    <section class="console-wrap">
+      <div class="console-head">
+        <h2>실행 로그</h2>
+        <button type="button" id="console-clear">지우기</button>
+      </div>
+      <pre class="console-output" id="console-output">[대기] 시연을 시작하세요.</pre>
     </section>
   </main>
+
   <script src="/demo.js"></script>
 </body>
 </html>

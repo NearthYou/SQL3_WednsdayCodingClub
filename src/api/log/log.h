@@ -11,6 +11,8 @@ typedef enum {
 
 void log_init(void);
 void log_destroy(void);
+void log_set_level(LogLevel level);
+LogLevel log_get_level(void);
 void log_write(LogLevel level, unsigned long long trace_id, const char *fmt, ...);
 void log_vwrite(LogLevel level, unsigned long long trace_id, const char *fmt, va_list args);
 

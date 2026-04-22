@@ -1,5 +1,6 @@
 #include "log.h"
 
+#include <stdatomic.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <string.h>
@@ -7,6 +8,7 @@
 
 static pthread_mutex_t g_log_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int g_log_initialized = 0;
+static _Atomic int g_log_level = LOG_WARN;
 
 static const char *level_name(LogLevel level) {
     switch (level) {
@@ -31,6 +33,14 @@ void log_destroy(void) {
     }
 }
 
+void log_set_level(LogLevel level) {
+    atomic_store(&g_log_level, (int)level);
+}
+
+LogLevel log_get_level(void) {
+    return (LogLevel)atomic_load(&g_log_level);
+}
+
 void log_vwrite(LogLevel level, unsigned long long trace_id, const char *fmt, va_list args) {
     time_t now;
     struct tm tm_now;
@@ -38,6 +48,7 @@ void log_vwrite(LogLevel level, unsigned long long trace_id, const char *fmt, va
     unsigned long tid;
 
     if (!g_log_initialized) log_init();
+    if ((int)level < atomic_load(&g_log_level)) return;
 
     now = time(NULL);
 #if defined(_POSIX_THREAD_SAFE_FUNCTIONS)

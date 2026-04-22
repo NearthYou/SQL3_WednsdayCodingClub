@@ -61,3 +61,21 @@ void task_queue_shutdown(TaskQueue *queue) {
     pthread_cond_broadcast(&queue->cond);
     pthread_mutex_unlock(&queue->mutex);
 }
+
+int task_queue_size(TaskQueue *queue) {
+    int size;
+    if (!queue) return 0;
+    pthread_mutex_lock(&queue->mutex);
+    size = queue->size;
+    pthread_mutex_unlock(&queue->mutex);
+    return size;
+}
+
+int task_queue_capacity(TaskQueue *queue) {
+    int capacity;
+    if (!queue) return 0;
+    pthread_mutex_lock(&queue->mutex);
+    capacity = queue->capacity;
+    pthread_mutex_unlock(&queue->mutex);
+    return capacity;
+}

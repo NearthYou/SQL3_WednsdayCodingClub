@@ -14,6 +14,7 @@
 #include "api/net/listener.h"
 #include "api/pool/task_queue.h"
 #include "api/pool/thread_pool.h"
+#include "api/stats/stats.h"
 #include "executor.h"
 
 #define API_PORT 8080
@@ -50,6 +51,7 @@ int main(void) {
     memset(&pool, 0, sizeof(pool));
 
     log_init();
+    log_set_level(LOG_INFO);
     if (!db_wrapper_init()) {
         fprintf(stderr, "failed to initialize db wrapper\n");
         return 1;
@@ -68,9 +70,11 @@ int main(void) {
     }
 
     workers = choose_worker_count();
+    api_stats_init(&queue, workers);
     if (!thread_pool_start(&pool, workers, &queue)) {
         fprintf(stderr, "failed to start thread pool\n");
         task_queue_destroy(&queue);
+        api_stats_destroy();
         db_wrapper_destroy();
         return 1;
     }
@@ -80,11 +84,13 @@ int main(void) {
         fprintf(stderr, "failed to create listener socket\n");
         thread_pool_stop(&pool);
         task_queue_destroy(&queue);
+        api_stats_destroy();
         db_wrapper_destroy();
         return 1;
     }
 
     log_write(LOG_INFO, 0, "server started on port %d (workers=%d)", API_PORT, workers);
+    log_set_level(LOG_WARN);
 
     while (!g_shutdown_requested) {
         int client_fd;
@@ -104,15 +110,18 @@ int main(void) {
         task.trace_id = next_trace_id();
 
         if (g_shutdown_requested || !task_queue_push(&queue, task)) {
+            api_stats_note_immediate_503();
             send_error_json_and_close(client_fd, 503, "service unavailable");
         }
     }
 
     if (listener_fd >= 0) close(listener_fd);
     task_queue_shutdown(&queue);
+    log_set_level(LOG_INFO);
     thread_pool_stop(&pool);
     close_all_tables();
     task_queue_destroy(&queue);
+    api_stats_destroy();
     db_wrapper_destroy();
     log_write(LOG_INFO, 0, "server stopped");
     log_destroy();

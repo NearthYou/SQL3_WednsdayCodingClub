@@ -10,6 +10,8 @@ int main(void) {
     DbResult result;
     DbRow row;
     DbCell cells[2];
+    JsonRowsWriter writer;
+    ApiStatsSnapshot stats;
     char *json = NULL;
     size_t len = 0;
 
@@ -39,6 +41,23 @@ int main(void) {
     assert(json_build_response(&result, &json, &len) == 1);
     assert(strstr(json, "\"status\":\"error\"") != NULL);
     assert(strstr(json, "invalid SQL") != NULL);
+    free(json);
+
+    assert(json_rows_writer_init(&writer) == 1);
+    assert(json_rows_writer_add_row(&writer, (const char *[]){"id", "email"},
+                                    (const char *[]){"1", "admin@test.com"}, 2) == 1);
+    assert(json_rows_writer_finish(&writer, &json, &len) == 1);
+    assert(strstr(json, "\"rows\":[{") != NULL);
+    free(json);
+
+    memset(&stats, 0, sizeof(stats));
+    stats.uptime_ms = 10;
+    stats.total_requests = 2;
+    stats.ok_responses = 2;
+    stats.current_log_level = LOG_WARN;
+    assert(json_build_stats_response(&stats, &json, &len) == 1);
+    assert(strstr(json, "\"uptime_ms\":10") != NULL);
+    assert(strstr(json, "\"log_level\":\"WARN\"") != NULL);
     free(json);
 
     printf("test_json_builder: OK\n");

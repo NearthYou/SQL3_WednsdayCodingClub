@@ -24,5 +24,7 @@ void task_queue_destroy(TaskQueue *queue);
 int task_queue_push(TaskQueue *queue, QueueTask task); /* 1=ok,0=full/shutdown */
 int task_queue_pop(TaskQueue *queue, QueueTask *task); /* 1=ok,0=shutdown+empty */
 void task_queue_shutdown(TaskQueue *queue);
+int task_queue_size(TaskQueue *queue);
+int task_queue_capacity(TaskQueue *queue);
 
 #endif

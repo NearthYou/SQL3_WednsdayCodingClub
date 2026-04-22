@@ -56,8 +56,10 @@ API_SRC = \
 	$(API_DIR)/pool/thread_pool.c \
 	$(API_DIR)/handler/request_handler.c \
 	$(API_DIR)/db/db_wrapper.c \
+	$(API_DIR)/cache/query_cache.c \
 	$(API_DIR)/json/json_builder.c \
-	$(API_DIR)/log/log.c
+	$(API_DIR)/log/log.c \
+	$(API_DIR)/stats/stats.c
 
 api: $(API_TARGET)
 
@@ -67,10 +69,11 @@ $(API_TARGET): $(API_SRC)
 run-api: $(API_TARGET)
 	./$(API_TARGET)
 
-test-api: $(API_TARGET) tests/api/test_http_parser tests/api/test_json_builder tests/api/test_task_queue
+test-api: $(API_TARGET) tests/api/test_http_parser tests/api/test_json_builder tests/api/test_task_queue tests/api/test_query_cache
 	tests/api/test_http_parser
 	tests/api/test_json_builder
 	tests/api/test_task_queue
+	tests/api/test_query_cache
 
 api-load:
 	$(PYTHON) scripts/run_api_load_test.py --concurrency 50 --requests 1000 --mix read-heavy --report artifacts/api-load/report.json
@@ -83,6 +86,9 @@ tests/api/test_json_builder: tests/api/test_json_builder.c $(API_DIR)/json/json_
 
 tests/api/test_task_queue: tests/api/test_task_queue.c $(API_DIR)/pool/task_queue.c
 	$(CC) $(API_CFLAGS) -Isrc -o $@ tests/api/test_task_queue.c $(API_DIR)/pool/task_queue.c
+
+tests/api/test_query_cache: tests/api/test_query_cache.c $(API_DIR)/cache/query_cache.c
+	$(CC) $(API_CFLAGS) -Isrc -o $@ tests/api/test_query_cache.c $(API_DIR)/cache/query_cache.c
 
 bench-tools: $(BENCH_GEN) $(BENCH_RUNNER)
 
@@ -157,4 +163,4 @@ bench-clean:
 
 clean:
 	rm -f $(TARGET) $(API_TARGET) $(BENCH_GEN) $(BENCH_RUNNER) $(BENCH_TEST)
-	rm -f tests/api/test_http_parser tests/api/test_json_builder tests/api/test_task_queue
+	rm -f tests/api/test_http_parser tests/api/test_json_builder tests/api/test_task_queue tests/api/test_query_cache

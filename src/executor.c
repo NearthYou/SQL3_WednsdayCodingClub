@@ -22,10 +22,6 @@ static const char *const JUNGLE_BENCHMARK_CSV = "jungle_benchmark_users.csv";
 static const char *const JUNGLE_BENCHMARK_TABLE = "jungle_benchmark_users";
 static const char *const JUNGLE_BENCHMARK_HEADER =
     "id(PK),email(UK),phone(UK),name,track(NN),background,history,pretest,github,status,round\n";
-static EngineRowSink g_select_sink = NULL;
-static void *g_select_sink_ctx = NULL;
-static int g_select_sink_failed = 0;
-
 #define INFO_PRINTF(...) do { if (!g_executor_quiet) printf(__VA_ARGS__); } while (0)
 
 static void set_executor_error(char *err, size_t err_size, const char *msg) {
@@ -3265,6 +3261,9 @@ typedef struct {
     int emit_results;
     int emit_traces;
     int matched_rows;
+    EngineRowSink sink;
+    void *sink_ctx;
+    int sink_failed;
 } SelectExecContext;
 
 typedef struct {
@@ -3284,7 +3283,7 @@ static void emit_selected_row(const char *row, SelectExecContext *exec) {
     if (!row || !exec) return;
     exec->matched_rows++;
 
-    if (g_select_sink && exec->table) {
+    if (exec->sink && exec->table) {
         parse_csv_row(row, fields, row_buf);
         if (exec->select_all) {
             sink_count = exec->table->col_count;
@@ -3299,8 +3298,8 @@ static void emit_selected_row(const char *row, SelectExecContext *exec) {
                 values[j] = fields[exec->select_idx[j]] ? fields[exec->select_idx[j]] : "";
             }
         }
-        if (!g_select_sink(col_names, values, sink_count, g_select_sink_ctx)) {
-            g_select_sink_failed = 1;
+        if (!exec->sink(col_names, values, sink_count, exec->sink_ctx)) {
+            exec->sink_failed = 1;
         }
     }
 
@@ -3647,7 +3646,13 @@ static void execute_select_file_string_range_scan(TableCache *tc, long start_off
     fseek(tc->file, 0, SEEK_END);
 }
 
-static int execute_select_internal(Statement *stmt, int emit_results, int emit_traces, int *matched_rows) {
+static int execute_select_internal(Statement *stmt,
+                                   int emit_results,
+                                   int emit_traces,
+                                   int *matched_rows,
+                                   EngineRowSink sink,
+                                   void *sink_ctx,
+                                   int *sink_failed) {
     TableCache *tc = get_table(stmt->table_name);
     int index_cond = -1;
     int index_col = -1;
@@ -3662,6 +3667,8 @@ static int execute_select_internal(Statement *stmt, int emit_results, int emit_t
     exec.select_all = stmt->select_all;
     exec.emit_results = emit_results;
     exec.emit_traces = emit_traces;
+    exec.sink = sink;
+    exec.sink_ctx = sink_ctx;
 
     if (!stmt->select_all) {
         for (i = 0; i < stmt->select_col_count; i++) {
@@ -3706,6 +3713,7 @@ static int execute_select_internal(Statement *stmt, int emit_results, int emit_t
                                                start_key, end_key);
             }
             if (matched_rows) *matched_rows = exec.matched_rows;
+            if (sink_failed) *sink_failed = exec.sink_failed;
             return 1;
         }
 
@@ -3731,6 +3739,7 @@ static int execute_select_internal(Statement *stmt, int emit_results, int emit_t
                                                       start_text, end_text);
             }
             if (matched_rows) *matched_rows = exec.matched_rows;
+            if (sink_failed) *sink_failed = exec.sink_failed;
             return 1;
         }
 
@@ -3773,6 +3782,7 @@ static int execute_select_internal(Statement *stmt, int emit_results, int emit_t
             execute_select_file_scan(tc, tc->uncached_start_offset, stmt, &exec);
         }
         if (matched_rows) *matched_rows = exec.matched_rows;
+        if (sink_failed) *sink_failed = exec.sink_failed;
         return 1;
     }
 
@@ -3795,6 +3805,7 @@ static int execute_select_internal(Statement *stmt, int emit_results, int emit_t
             execute_select_file_scan(tc, tc->uncached_start_offset, stmt, &exec);
         }
         if (matched_rows) *matched_rows = exec.matched_rows;
+        if (sink_failed) *sink_failed = exec.sink_failed;
         return 1;
     }
 
@@ -3823,12 +3834,13 @@ static int execute_select_internal(Statement *stmt, int emit_results, int emit_t
         execute_select_file_scan(tc, tc->uncached_start_offset, stmt, &exec);
     }
     if (matched_rows) *matched_rows = exec.matched_rows;
+    if (sink_failed) *sink_failed = exec.sink_failed;
     return 1;
 }
 
 void execute_select(Statement *stmt) {
     int emit = g_executor_quiet ? 0 : 1;
-    (void)execute_select_internal(stmt, emit, emit, NULL);
+    (void)execute_select_internal(stmt, emit, emit, NULL, NULL, NULL, NULL);
 }
 
 int execute_select_result(Statement *stmt,
@@ -3837,20 +3849,16 @@ int execute_select_result(Statement *stmt,
                           char *err,
                           size_t err_size) {
     int ok;
+    int sink_failed = 0;
 
     if (!stmt || stmt->type != STMT_SELECT) {
         set_executor_error(err, err_size, "invalid SELECT statement");
         return 0;
     }
 
-    g_select_sink = sink;
-    g_select_sink_ctx = ctx;
-    g_select_sink_failed = 0;
-    ok = execute_select_internal(stmt, 0, 0, NULL);
-    g_select_sink = NULL;
-    g_select_sink_ctx = NULL;
+    ok = execute_select_internal(stmt, 0, 0, NULL, sink, ctx, &sink_failed);
 
-    if (!ok || g_select_sink_failed) {
+    if (!ok || sink_failed) {
         set_executor_error(err, err_size, "DB execution failed");
         return 0;
     }
@@ -4780,7 +4788,7 @@ void run_jungle_benchmark(int record_count) {
 
         snprintf(target, sizeof(target), "%ld", key);
         set_eq_select_value(&stmt, target);
-        if (!execute_select_internal(&stmt, 0, 0, &matched_rows)) return;
+        if (!execute_select_internal(&stmt, 0, 0, &matched_rows, NULL, NULL, NULL)) return;
         if (matched_rows <= 0) {
             printf("[error] jungle benchmark ID lookup returned no rows for key %ld.\n", key);
             return;
@@ -4797,7 +4805,7 @@ void run_jungle_benchmark(int record_count) {
 
         build_jungle_email(((i * 7919) % record_count) + 1, target, sizeof(target));
         set_eq_select_value(&stmt, target);
-        if (!execute_select_internal(&stmt, 0, 0, &matched_rows)) return;
+        if (!execute_select_internal(&stmt, 0, 0, &matched_rows, NULL, NULL, NULL)) return;
         if (matched_rows <= 0) {
             printf("[error] jungle benchmark email lookup returned no rows for '%s'.\n", target);
             return;
@@ -4814,7 +4822,7 @@ void run_jungle_benchmark(int record_count) {
 
         build_jungle_phone(((i * 7919) % record_count) + 1, target, sizeof(target));
         set_eq_select_value(&stmt, target);
-        if (!execute_select_internal(&stmt, 0, 0, &matched_rows)) return;
+        if (!execute_select_internal(&stmt, 0, 0, &matched_rows, NULL, NULL, NULL)) return;
         if (matched_rows <= 0) {
             printf("[error] jungle benchmark phone lookup returned no rows for '%s'.\n", target);
             return;
@@ -4831,7 +4839,7 @@ void run_jungle_benchmark(int record_count) {
 
         build_jungle_name(((i * 7919) % record_count) + 1, target, sizeof(target));
         set_eq_select_value(&stmt, target);
-        if (!execute_select_internal(&stmt, 0, 0, &matched_rows)) return;
+        if (!execute_select_internal(&stmt, 0, 0, &matched_rows, NULL, NULL, NULL)) return;
         if (matched_rows <= 0) {
             printf("[error] jungle benchmark name lookup returned no rows for '%s'.\n", target);
             return;

@@ -1,10 +1,12 @@
 CC ?= gcc
 CFLAGS ?= -O2 -fdiagnostics-color=always -g
 TARGET ?= sqlsprocessor
+API_TARGET ?= mini_dbms_api
 
 SRC_DIR := src
 BENCH_DIR := tools/bench
 EXAMPLE_SQL_DIR := examples/sql
+API_DIR := $(SRC_DIR)/api
 
 BENCH_GEN ?= bench_workload_generator
 BENCH_RUNNER ?= benchmark_runner
@@ -24,6 +26,7 @@ SRC_DEPS = \
 	$(SRC_DIR)/types.h
 
 SQL ?= $(EXAMPLE_SQL_DIR)/demo_bptree.sql
+API_PORT ?= 8080
 PYTHON ?= python
 JUNGLE_DATASET ?= jungle_benchmark_users.csv
 JUNGLE_RECORDS ?= 1000000
@@ -31,7 +34,7 @@ BENCH_SCORE_UPDATE_ROWS ?= 1000000
 BENCH_SCORE_DELETE_ROWS ?= 1000000
 BENCH_SCORE_IN_TMP ?= 1
 
-.PHONY: all build bench-tools bench-test run demo-bptree demo-jungle scenario-jungle-regression scenario-jungle-range-and-replay scenario-jungle-update-constraints generate-jungle generate-jungle-sql benchmark benchmark-jungle bench-smoke bench-score bench-report bench-clean clean
+.PHONY: all build api run-api test-api api-load bench-tools bench-test run demo-bptree demo-jungle scenario-jungle-regression scenario-jungle-range-and-replay scenario-jungle-update-constraints generate-jungle generate-jungle-sql benchmark benchmark-jungle bench-smoke bench-score bench-report bench-clean clean
 
 all: build
 
@@ -39,6 +42,47 @@ build: $(TARGET)
 
 $(TARGET): $(SRC_DEPS)
 	$(CC) $(CFLAGS) $(SRC) -o $(TARGET)
+
+API_CFLAGS := -Wall -Wextra -O2 -g -pthread
+API_SRC = \
+	$(SRC_DIR)/api_main.c \
+	$(SRC_DIR)/lexer.c \
+	$(SRC_DIR)/parser.c \
+	$(SRC_DIR)/bptree.c \
+	$(SRC_DIR)/executor.c \
+	$(API_DIR)/net/listener.c \
+	$(API_DIR)/net/http_parser.c \
+	$(API_DIR)/pool/task_queue.c \
+	$(API_DIR)/pool/thread_pool.c \
+	$(API_DIR)/handler/request_handler.c \
+	$(API_DIR)/db/db_wrapper.c \
+	$(API_DIR)/json/json_builder.c \
+	$(API_DIR)/log/log.c
+
+api: $(API_TARGET)
+
+$(API_TARGET): $(API_SRC)
+	$(CC) $(API_CFLAGS) $(API_SRC) -o $(API_TARGET)
+
+run-api: $(API_TARGET)
+	./$(API_TARGET)
+
+test-api: $(API_TARGET) tests/api/test_http_parser tests/api/test_json_builder tests/api/test_task_queue
+	tests/api/test_http_parser
+	tests/api/test_json_builder
+	tests/api/test_task_queue
+
+api-load:
+	$(PYTHON) scripts/run_api_load_test.py --concurrency 50 --requests 1000 --mix read-heavy --report artifacts/api-load/report.json
+
+tests/api/test_http_parser: tests/api/test_http_parser.c $(API_DIR)/net/http_parser.c
+	$(CC) $(API_CFLAGS) -Isrc -o $@ tests/api/test_http_parser.c $(API_DIR)/net/http_parser.c
+
+tests/api/test_json_builder: tests/api/test_json_builder.c $(API_DIR)/json/json_builder.c
+	$(CC) $(API_CFLAGS) -Isrc -o $@ tests/api/test_json_builder.c $(API_DIR)/json/json_builder.c
+
+tests/api/test_task_queue: tests/api/test_task_queue.c $(API_DIR)/pool/task_queue.c
+	$(CC) $(API_CFLAGS) -Isrc -o $@ tests/api/test_task_queue.c $(API_DIR)/pool/task_queue.c
 
 bench-tools: $(BENCH_GEN) $(BENCH_RUNNER)
 
@@ -112,4 +156,5 @@ bench-clean:
 	rm -f generated_sql/oracle_smoke.json generated_sql/oracle_regression.json generated_sql/oracle_score.json
 
 clean:
-	rm -f $(TARGET) $(BENCH_GEN) $(BENCH_RUNNER) $(BENCH_TEST)
+	rm -f $(TARGET) $(API_TARGET) $(BENCH_GEN) $(BENCH_RUNNER) $(BENCH_TEST)
+	rm -f tests/api/test_http_parser tests/api/test_json_builder tests/api/test_task_queue

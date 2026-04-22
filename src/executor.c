@@ -22,8 +22,16 @@ static const char *const JUNGLE_BENCHMARK_CSV = "jungle_benchmark_users.csv";
 static const char *const JUNGLE_BENCHMARK_TABLE = "jungle_benchmark_users";
 static const char *const JUNGLE_BENCHMARK_HEADER =
     "id(PK),email(UK),phone(UK),name,track(NN),background,history,pretest,github,status,round\n";
+static EngineRowSink g_select_sink = NULL;
+static void *g_select_sink_ctx = NULL;
+static int g_select_sink_failed = 0;
 
 #define INFO_PRINTF(...) do { if (!g_executor_quiet) printf(__VA_ARGS__); } while (0)
+
+static void set_executor_error(char *err, size_t err_size, const char *msg) {
+    if (!err || err_size == 0) return;
+    snprintf(err, err_size, "%s", msg ? msg : "DB execution failed");
+}
 
 void set_executor_quiet(int quiet) {
     g_executor_quiet = quiet ? 1 : 0;
@@ -3249,7 +3257,9 @@ void execute_insert(Statement *stmt) {
 }
 
 typedef struct {
+    TableCache *table;
     int select_idx[MAX_COLS];
+    char select_names[MAX_COLS][50];
     int select_count;
     int select_all;
     int emit_results;
@@ -3267,9 +3277,33 @@ static void emit_selected_row(const char *row, SelectExecContext *exec) {
     char row_buf[RECORD_SIZE];
     char *fields[MAX_COLS] = {0};
     int j;
+    const char *col_names[MAX_COLS] = {0};
+    const char *values[MAX_COLS] = {0};
+    int sink_count = 0;
 
     if (!row || !exec) return;
     exec->matched_rows++;
+
+    if (g_select_sink && exec->table) {
+        parse_csv_row(row, fields, row_buf);
+        if (exec->select_all) {
+            sink_count = exec->table->col_count;
+            for (j = 0; j < sink_count; j++) {
+                col_names[j] = exec->table->cols[j].name;
+                values[j] = fields[j] ? fields[j] : "";
+            }
+        } else {
+            sink_count = exec->select_count;
+            for (j = 0; j < sink_count; j++) {
+                col_names[j] = exec->select_names[j];
+                values[j] = fields[exec->select_idx[j]] ? fields[exec->select_idx[j]] : "";
+            }
+        }
+        if (!g_select_sink(col_names, values, sink_count, g_select_sink_ctx)) {
+            g_select_sink_failed = 1;
+        }
+    }
+
     if (!exec->emit_results) return;
 
     if (exec->select_all) {
@@ -3624,6 +3658,7 @@ static int execute_select_internal(Statement *stmt, int emit_results, int emit_t
     if (!tc) return 0;
     if (!validate_where_columns(tc, stmt, "SELECT")) return 0;
     memset(&exec, 0, sizeof(exec));
+    exec.table = tc;
     exec.select_all = stmt->select_all;
     exec.emit_results = emit_results;
     exec.emit_traces = emit_traces;
@@ -3636,6 +3671,8 @@ static int execute_select_internal(Statement *stmt, int emit_results, int emit_t
                 return 0;
             }
             exec.select_idx[i] = idx;
+            strncpy(exec.select_names[i], tc->cols[idx].name, sizeof(exec.select_names[i]) - 1);
+            exec.select_names[i][sizeof(exec.select_names[i]) - 1] = '\0';
         }
         exec.select_count = stmt->select_col_count;
     }
@@ -3792,6 +3829,104 @@ static int execute_select_internal(Statement *stmt, int emit_results, int emit_t
 void execute_select(Statement *stmt) {
     int emit = g_executor_quiet ? 0 : 1;
     (void)execute_select_internal(stmt, emit, emit, NULL);
+}
+
+int execute_select_result(Statement *stmt,
+                          EngineRowSink sink,
+                          void *ctx,
+                          char *err,
+                          size_t err_size) {
+    int ok;
+
+    if (!stmt || stmt->type != STMT_SELECT) {
+        set_executor_error(err, err_size, "invalid SELECT statement");
+        return 0;
+    }
+
+    g_select_sink = sink;
+    g_select_sink_ctx = ctx;
+    g_select_sink_failed = 0;
+    ok = execute_select_internal(stmt, 0, 0, NULL);
+    g_select_sink = NULL;
+    g_select_sink_ctx = NULL;
+
+    if (!ok || g_select_sink_failed) {
+        set_executor_error(err, err_size, "DB execution failed");
+        return 0;
+    }
+    if (err && err_size > 0) err[0] = '\0';
+    return 1;
+}
+
+int execute_insert_result(Statement *stmt, long *inserted_id, char *err, size_t err_size) {
+    TableCache *tc;
+
+    if (inserted_id) *inserted_id = 0;
+    if (!stmt || stmt->type != STMT_INSERT) {
+        set_executor_error(err, err_size, "invalid INSERT statement");
+        return 0;
+    }
+    tc = get_table(stmt->table_name);
+    if (!tc) {
+        set_executor_error(err, err_size, "table does not exist");
+        return 0;
+    }
+    if (!insert_row_data(tc, stmt->row_data, 0, inserted_id)) {
+        set_executor_error(err, err_size, "DB execution failed");
+        return 0;
+    }
+    if (err && err_size > 0) err[0] = '\0';
+    return 1;
+}
+
+int execute_update_result(Statement *stmt, int *affected_rows, char *err, size_t err_size) {
+    TableCache *tc;
+    int set_idx;
+
+    if (affected_rows) *affected_rows = -1;
+    if (!stmt || stmt->type != STMT_UPDATE) {
+        set_executor_error(err, err_size, "invalid UPDATE statement");
+        return 0;
+    }
+    tc = get_table(stmt->table_name);
+    if (!tc) {
+        set_executor_error(err, err_size, "table does not exist");
+        return 0;
+    }
+    if (!validate_where_columns(tc, stmt, "UPDATE")) {
+        set_executor_error(err, err_size, "invalid UPDATE statement");
+        return 0;
+    }
+    set_idx = get_col_idx(tc, stmt->set_col);
+    if (stmt->where_count == 0 || set_idx == -1) {
+        set_executor_error(err, err_size, "invalid UPDATE statement");
+        return 0;
+    }
+    execute_update(stmt);
+    if (err && err_size > 0) err[0] = '\0';
+    return 1;
+}
+
+int execute_delete_result(Statement *stmt, int *affected_rows, char *err, size_t err_size) {
+    TableCache *tc;
+
+    if (affected_rows) *affected_rows = -1;
+    if (!stmt || stmt->type != STMT_DELETE) {
+        set_executor_error(err, err_size, "invalid DELETE statement");
+        return 0;
+    }
+    tc = get_table(stmt->table_name);
+    if (!tc) {
+        set_executor_error(err, err_size, "table does not exist");
+        return 0;
+    }
+    if (stmt->where_count == 0 || !validate_where_columns(tc, stmt, "DELETE")) {
+        set_executor_error(err, err_size, "invalid DELETE statement");
+        return 0;
+    }
+    execute_delete(stmt);
+    if (err && err_size > 0) err[0] = '\0';
+    return 1;
 }
 
 static int rewrite_truncated_update(TableCache *tc, Statement *stmt,

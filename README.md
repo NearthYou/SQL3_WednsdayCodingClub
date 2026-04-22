@@ -33,6 +33,40 @@ gcc -O2 src/main.c -o sqlsprocessor.exe
 make
 ```
 
+## API 서버 (v1)
+
+`POST /query` 단일 엔드포인트를 제공하는 HTTP/1.1 API 서버를 별도 실행 파일로 빌드할 수 있습니다.
+
+상세 설계/제약은 `docs/API_SERVER_DEVELOPMENT_SPEC_KO.md` 문서를 따릅니다.
+
+```bash
+make api
+./mini_dbms_api
+```
+
+기본 포트는 `8080`이고, 요청은 `Content-Type: text/plain`의 SQL 1문장을 body로 보냅니다.
+
+```bash
+curl -X POST http://127.0.0.1:8080/query \
+  -H 'Content-Type: text/plain' \
+  --data "SELECT * FROM case_basic_users WHERE id = 1;"
+```
+
+API 테스트:
+
+```bash
+make test-api
+bash tests/api/smoke.sh
+bash tests/api/stress.sh
+```
+
+API 부하 테스트 결과를 JSON/Markdown으로 남길 수 있습니다. 서버를 먼저 실행한 뒤 별도 터미널에서 실행합니다.
+
+```bash
+make run-api
+python scripts/run_api_load_test.py --concurrency 50 --requests 1000 --mix read-heavy --report artifacts/api-load/report.json
+```
+
 ## 기본 실행
 
 ```powershell

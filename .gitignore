@@ -1,4 +1,5 @@
 sqlsprocessor
+mini_dbms_api
 main
 *.o
 *.exe
@@ -15,12 +16,17 @@ uk_test_users.csv
 uk_test.sql
 generated_sql/
 artifacts/
+scripts/__pycache__/
+tests/api/test_http_parser
+tests/api/test_json_builder
+tests/api/test_task_queue
 *.delta
 *.idx
 *.tmp
 bptree_benchmark_users.csv
 bptree_perf_users.csv
 jungle_benchmark_users.csv
+jungle_workload_users.csv
 bench_workload_generator
 benchmark_runner
 bench_formula_test

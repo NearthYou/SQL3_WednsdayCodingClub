@@ -59,6 +59,7 @@ int db_begin(Db *db, DbTx **out);
 int db_txdo(DbTx *tx, const char *sql, DbRes *res);
 int db_commit(Db *db, DbTx *tx);
 int db_abort(Db *db, DbTx *tx);
+unsigned long long db_tab_ver(Db *db, const char *table);
 DbSnap *db_snap(Db *db);
 void db_done(Db *db, DbSnap *snap);
 void db_free(DbRes *res);

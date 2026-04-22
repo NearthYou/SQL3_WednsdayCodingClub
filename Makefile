@@ -32,6 +32,8 @@ SRV_SRCS = \
 	src/api/resp.c \
 	src/api/route.c \
 	src/api/srv.c \
+	src/api/cache/query_cache.c \
+	src/api/stats/stats.c \
 	src/db/dbapi.c \
 	src/db/mvcc.c \
 	src/thr/pool.c \

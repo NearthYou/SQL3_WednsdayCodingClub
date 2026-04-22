@@ -9,15 +9,27 @@
 #include <strings.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "resp.h"
 #include "route.h"
+#include "cache/query_cache.h"
+#include "stats/stats.h"
+
+#define CONN_BUF_CAP 32768
+#define MAX_HDR_BYTES 8192
 
 typedef struct {
     Srv *srv;
     int fd;
 } Conn;
+
+typedef struct {
+    int fd;
+    char buf[CONN_BUF_CAP];
+    size_t used;
+} HttpConn;
 
 static int write_all(int fd, const char *buf, size_t len) {
     while (len > 0) {
@@ -32,91 +44,137 @@ static int write_all(int fd, const char *buf, size_t len) {
     return 1;
 }
 
+static unsigned long long now_ns(void) {
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long long)ts.tv_sec * 1000000000ULL + (unsigned long long)ts.tv_nsec;
+}
+
 static void free_req(HttpReq *req) {
     free((char *)req->body);
     memset(req, 0, sizeof(*req));
 }
 
-static int parse_req(int fd, int max_body, HttpReq *req) {
-    char *buf = NULL;
-    size_t cap = 0;
-    size_t len = 0;
-    ssize_t nread;
-    char *hdr;
-    char *line;
-    char *ptr;
-    size_t need = 0;
+static char *find_hdr_end(const char *buf, size_t used) {
+    size_t i;
 
-    memset(req, 0, sizeof(*req));
-    while (1) {
-        if (cap - len < 1025) {
-            size_t ncap = cap == 0 ? 4097 : cap * 2 + 1;
-            char *nbuf = (char *)realloc(buf, ncap);
-            if (!nbuf) {
-                free(buf);
-                return 500;
-            }
-            buf = nbuf;
-            cap = ncap;
+    if (!buf || used < 4) return NULL;
+    for (i = 0; i + 3 < used; i++) {
+        if (buf[i] == '\r' && buf[i + 1] == '\n' && buf[i + 2] == '\r' && buf[i + 3] == '\n') {
+            return (char *)(buf + i);
         }
-        nread = recv(fd, buf + len, cap - len - 1, 0);
-        if (nread <= 0) {
-            free(buf);
+    }
+    return NULL;
+}
+
+static void trim(char *s) {
+    char *start = s;
+    char *end;
+
+    while (*start && (*start == ' ' || *start == '\t' || *start == '\r' || *start == '\n')) start++;
+    if (start != s) memmove(s, start, strlen(start) + 1);
+    end = s + strlen(s);
+    while (end > s && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n')) end--;
+    *end = '\0';
+}
+
+static int ensure_buffered(HttpConn *conn, size_t target, const char *eof_msg) {
+    while (conn->used < target) {
+        ssize_t nread;
+
+        if (conn->used >= sizeof(conn->buf)) return 413;
+        nread = recv(conn->fd, conn->buf + conn->used, sizeof(conn->buf) - conn->used, 0);
+        if (nread == 0) return conn->used == 0 ? 0 : 400;
+        if (nread < 0) {
+            if (errno == EINTR) continue;
+            (void)eof_msg;
             return 400;
         }
-        len += (size_t)nread;
-        buf[len] = '\0';
-        hdr = strstr(buf, "\r\n\r\n");
-        if (hdr) break;
-        hdr = strstr(buf, "\n\n");
-        if (hdr) break;
-        if (len > 65536) {
-            free(buf);
-            return 413;
+        conn->used += (size_t)nread;
+    }
+    return 200;
+}
+
+static int parse_req(HttpConn *conn, int max_body, HttpReq *req, int *conn_close) {
+    char hdr_copy[MAX_HDR_BYTES + 1];
+    char *hdr_end;
+    size_t hdr_len;
+    size_t req_bytes;
+    char *line;
+    char *saveptr = NULL;
+    size_t body_len = 0;
+    char version[16];
+
+    memset(req, 0, sizeof(*req));
+    *conn_close = 0;
+
+    while ((hdr_end = find_hdr_end(conn->buf, conn->used)) == NULL) {
+        int rc;
+
+        if (conn->used >= MAX_HDR_BYTES) return 413;
+        rc = ensure_buffered(conn, conn->used + 1, "failed to read request header");
+        if (rc != 200) return rc;
+    }
+
+    hdr_len = (size_t)(hdr_end - conn->buf);
+    if (hdr_len > MAX_HDR_BYTES) return 413;
+    memcpy(hdr_copy, conn->buf, hdr_len);
+    hdr_copy[hdr_len] = '\0';
+
+    line = strtok_r(hdr_copy, "\r\n", &saveptr);
+    if (!line || sscanf(line, "%7s %255s %15s", req->meth, req->path, version) != 3) return 400;
+    if (strcmp(version, "HTTP/1.1") != 0) return 400;
+
+    for (line = strtok_r(NULL, "\r\n", &saveptr); line; line = strtok_r(NULL, "\r\n", &saveptr)) {
+        char *colon = strchr(line, ':');
+
+        if (!colon) continue;
+        *colon = '\0';
+        colon++;
+        trim(line);
+        trim(colon);
+        if (strncasecmp(line, "Content-Length", 14) == 0) {
+            char *endptr = NULL;
+            unsigned long v = strtoul(colon, &endptr, 10);
+            if (!endptr || *endptr != '\0') return 400;
+            body_len = (size_t)v;
+        } else if (strncasecmp(line, "Connection", 10) == 0) {
+            if (strncasecmp(colon, "close", 5) == 0) *conn_close = 1;
+        } else if (strncasecmp(line, "Transfer-Encoding", 17) == 0) {
+            return 400;
         }
     }
-    if (strstr(buf, "\r\n\r\n")) hdr = strstr(buf, "\r\n\r\n") + 4;
-    else hdr = strstr(buf, "\n\n") + 2;
-    line = strtok(buf, "\r\n");
-    if (!line || sscanf(line, "%7s %255s", req->meth, req->path) != 2) {
-        free(buf);
-        return 400;
+
+    if ((int)body_len > max_body) return 413;
+    req_bytes = hdr_len + 4 + body_len;
+    if (req_bytes > sizeof(conn->buf)) return 413;
+    {
+        int rc = ensure_buffered(conn, req_bytes, "failed to read request body");
+        if (rc != 200) return rc;
     }
-    ptr = strchr(req->path, '?');
-    if (ptr) {
-        strncpy(req->qry, ptr + 1, sizeof(req->qry) - 1);
-        *ptr = '\0';
+
+    if (body_len > 0) {
+        req->body = (char *)calloc(body_len + 1, 1);
+        if (!req->body) return 500;
+        memcpy((char *)req->body, conn->buf + hdr_len + 4, body_len);
+        ((char *)req->body)[body_len] = '\0';
     }
-    for (line = strtok(NULL, "\r\n"); line; line = strtok(NULL, "\r\n")) {
-        if (line[0] == '\0') break;
-        if (strncasecmp(line, "Content-Length:", 15) == 0) need = (size_t)strtoul(line + 15, NULL, 10);
-    }
-    if ((int)need > max_body) {
-        free(buf);
-        return 413;
-    }
-    req->body = (char *)calloc(need + 1, 1);
-    if (!req->body) {
-        free(buf);
-        return 500;
-    }
-    req->body_len = need;
-    if (need > 0) {
-        size_t have = len - (size_t)(hdr - buf);
-        if (have > need) have = need;
-        memcpy((char *)req->body, hdr, have);
-        while (have < need) {
-            nread = recv(fd, (char *)req->body + have, need - have, 0);
-            if (nread <= 0) {
-                free_req(req);
-                free(buf);
-                return 400;
-            }
-            have += (size_t)nread;
+    req->body_len = body_len;
+
+    {
+        char *q = strchr(req->path, '?');
+        if (q) {
+            strncpy(req->qry, q + 1, sizeof(req->qry) - 1);
+            req->qry[sizeof(req->qry) - 1] = '\0';
+            *q = '\0';
         }
-        ((char *)req->body)[need] = '\0';
     }
-    free(buf);
+
+    if (conn->used > req_bytes) {
+        memmove(conn->buf, conn->buf + req_bytes, conn->used - req_bytes);
+    }
+    conn->used -= req_bytes;
     return 200;
 }
 
@@ -132,60 +190,82 @@ static const char *reason_of(int code) {
     return "Internal Server Error";
 }
 
-static void send_res(int fd, HttpRes *res) {
+static void send_res(int fd, HttpRes *res, int conn_close) {
     char head[256];
     int n = snprintf(head, sizeof(head),
                      "HTTP/1.1 %d %s\r\n"
                      "Content-Type: application/json\r\n"
                      "Content-Length: %zu\r\n"
-                     "Connection: close\r\n\r\n",
-                     res->code, reason_of(res->code), res->len);
+                     "Connection: %s\r\n\r\n",
+                     res->code, reason_of(res->code), res->len, conn_close ? "close" : "keep-alive");
     if (n > 0) write_all(fd, head, (size_t)n);
     if (res->body && res->len > 0) write_all(fd, res->body, res->len);
 }
 
 static void conn_run(void *arg) {
     Conn *conn = (Conn *)arg;
+    HttpConn hc;
     HttpReq req;
     HttpRes res;
-    int code;
     static unsigned long req_seq = 0;
+    int req_count = 0;
 
-    memset(&res, 0, sizeof(res));
-    code = parse_req(conn->fd, conn->srv->max_body, &req);
-    snprintf(req.req_id, sizeof(req.req_id), "%lu", __sync_add_and_fetch(&req_seq, 1));
-    if (code != 200) {
-        Buf buf;
-        const char *errc = "BAD_REQ";
-        const char *msg = "request parse failed";
+    memset(&hc, 0, sizeof(hc));
+    hc.fd = conn->fd;
+    while (1) {
+        int code;
+        int conn_close = 0;
+        unsigned long long t0;
 
-        if (code == 413) {
-            errc = "TOO_BIG";
-            msg = "request body too large";
-        } else if (code == 500) {
-            errc = "INT_ERR";
-            msg = "internal server error";
+        memset(&res, 0, sizeof(res));
+        t0 = now_ns();
+        code = parse_req(&hc, conn->srv->max_body, &req, &conn_close);
+        api_stats_add_parse_ns(now_ns() - t0);
+        if (code == 0) break;
+        api_stats_note_request_started();
+        if (req_count > 0) api_stats_note_keep_alive_reuse();
+        req_count++;
+        snprintf(req.req_id, sizeof(req.req_id), "%lu", __sync_add_and_fetch(&req_seq, 1));
+        if (code != 200) {
+            Buf buf;
+            const char *errc = "BAD_REQ";
+            const char *msg = "request parse failed";
+            unsigned long long s0;
+
+            if (code == 413) {
+                errc = "TOO_BIG";
+                msg = "request body too large";
+            } else if (code == 500) {
+                errc = "INT_ERR";
+                msg = "internal server error";
+            }
+            buf_init(&buf);
+            buf_put(&buf, "{\"ok\":false,\"err\":{\"code\":");
+            buf_jsn(&buf, errc);
+            buf_put(&buf, ",\"msg\":");
+            buf_jsn(&buf, msg);
+            buf_put(&buf, "},\"meta\":{\"req_id\":");
+            buf_jsn(&buf, req.req_id);
+            buf_put(&buf, "}}");
+            res_set(&res, code, &buf);
+            s0 = now_ns();
+            send_res(conn->fd, &res, 1);
+            api_stats_add_send_ns(now_ns() - s0);
+            api_stats_note_request_finished(code);
+            res_free(&res);
+            break;
         }
-
-        buf_init(&buf);
-        buf_put(&buf, "{\"ok\":false,\"err\":{\"code\":");
-        buf_jsn(&buf, errc);
-        buf_put(&buf, ",\"msg\":");
-        buf_jsn(&buf, msg);
-        buf_put(&buf, "},\"meta\":{\"req_id\":");
-        buf_jsn(&buf, req.req_id);
-        buf_put(&buf, "}}");
-        res_set(&res, code, &buf);
-        send_res(conn->fd, &res);
+        route_do(conn->srv, &req, &res);
+        {
+            unsigned long long s0 = now_ns();
+            send_res(conn->fd, &res, conn_close);
+            api_stats_add_send_ns(now_ns() - s0);
+        }
+        api_stats_note_request_finished(res.code);
         res_free(&res);
-        close(conn->fd);
-        free(conn);
-        return;
+        free_req(&req);
+        if (conn_close) break;
     }
-    route_do(conn->srv, &req, &res);
-    send_res(conn->fd, &res);
-    res_free(&res);
-    free_req(&req);
     close(conn->fd);
     free(conn);
 }
@@ -207,6 +287,8 @@ Srv *srv_new(const SrvCfg *cfg) {
         srv_del(srv);
         return NULL;
     }
+    api_stats_init();
+    query_cache_init();
     return srv;
 }
 
@@ -224,6 +306,8 @@ void srv_del(Srv *srv) {
     srv_stop(srv);
     pool_del(srv->apip);
     pool_del(srv->dbp);
+    query_cache_destroy();
+    api_stats_destroy();
     free(srv);
 }
 
@@ -246,6 +330,8 @@ int srv_run(Srv *srv) {
         return -1;
     }
     srv->lfd = fd;
+    printf("dbsrv listening on :%d\n", srv->port);
+    fflush(stdout);
     while (!srv->stop) {
         int cfd = accept(fd, NULL, NULL);
         Conn *conn;
@@ -269,7 +355,8 @@ int srv_run(Srv *srv) {
             buf_init(&buf);
             buf_put(&buf, "{\"ok\":false,\"err\":{\"code\":\"Q_FULL\",\"msg\":\"api queue full\"}}");
             res_set(&res, 503, &buf);
-            send_res(cfd, &res);
+            send_res(cfd, &res, 1);
+            api_stats_note_immediate_503();
             res_free(&res);
             close(cfd);
             free(conn);

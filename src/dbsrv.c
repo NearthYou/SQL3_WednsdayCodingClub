@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "api/srv.h"
 
@@ -10,6 +11,14 @@ static Srv *g_srv = NULL;
 static int env_i(const char *key, int def) {
     const char *val = getenv(key);
     return val && val[0] ? atoi(val) : def;
+}
+
+static int auto_thr(void) {
+    long ncpu = sysconf(_SC_NPROCESSORS_ONLN);
+
+    if (ncpu <= 0) return 4;
+    if (ncpu > 256) ncpu = 256;
+    return (int)(ncpu * 2);
 }
 
 static void on_sig(int sig) {
@@ -23,12 +32,14 @@ int main(void) {
     SrvCfg cfg;
     const char *root = getenv("DB_ROOT");
     int port = env_i("DBSV_PORT", 8080);
-    int api_thr = env_i("API_THR", 4);
-    int db_thr = env_i("DB_THR", 4);
+    int api_thr = env_i("API_THR", 0);
+    int db_thr = env_i("DB_THR", 0);
     int que_max = env_i("QUE_MAX", 128);
     int max_body = env_i("MAX_BODY", 1048576);
     int max_sql = env_i("MAX_SQL", 4096);
     int max_qry = env_i("MAX_QRY", 32);
+    if (api_thr <= 0) api_thr = auto_thr();
+    if (db_thr <= 0) db_thr = auto_thr();
 
     memset(&dbcfg, 0, sizeof(dbcfg));
     dbcfg.root = (root && root[0]) ? root : "data";
@@ -56,9 +67,13 @@ int main(void) {
     }
     signal(SIGINT, on_sig);
     signal(SIGTERM, on_sig);
-    printf("dbsrv listening on :%d (api=%d db=%d q=%d)\n", port, api_thr, db_thr, que_max);
-    fflush(stdout);
-    srv_run(g_srv);
+    if (srv_run(g_srv) != 0) {
+        fprintf(stderr, "srv_run failed (port=%d)\n", port);
+        srv_del(g_srv);
+        db_close(db);
+        g_srv = NULL;
+        return 1;
+    }
     srv_del(g_srv);
     db_close(db);
     g_srv = NULL;

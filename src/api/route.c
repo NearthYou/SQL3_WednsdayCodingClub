@@ -5,12 +5,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/time.h>
 
 #include "resp.h"
 #include "srv.h"
+#include "cache/query_cache.h"
 #include "db/dbapi.h"
 #include "legacy/parser.h"
+#include "stats/stats.h"
 #include "thr/pool.h"
 
 typedef struct {
@@ -34,6 +37,13 @@ static long now_ms(void) {
 
     gettimeofday(&tv, NULL);
     return (long)tv.tv_sec * 1000L + tv.tv_usec / 1000L;
+}
+
+static unsigned long long now_ns(void) {
+    struct timespec ts;
+
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (unsigned long long)ts.tv_sec * 1000000000ULL + (unsigned long long)ts.tv_nsec;
 }
 
 static void qjob_run(void *arg) {
@@ -318,25 +328,82 @@ static int add_meta(Buf *buf, const HttpReq *req, int tid, long lat_ms) {
            buf_fmt(buf, ",\"thr_id\":%d,\"lat_ms\":%ld}}", tid, lat_ms);
 }
 
-static int sql_ok(HttpRes *res, const HttpReq *req, DbRes *dres, int tid, long lat_ms) {
+static int sql_data(Buf *buf, DbRes *dres) {
+    if (!buf_chr(buf, '{') ||
+        !buf_put(buf, "\"rows\":") ||
+        !add_rows(buf, dres) ||
+        !buf_fmt(buf, ",\"count\":%d", dres->count)) {
+        return 0;
+    }
+    if (dres->last_id > 0 && !buf_fmt(buf, ",\"last_id\":%ld", dres->last_id)) {
+        return 0;
+    }
+    return buf_chr(buf, '}');
+}
+
+static int sql_data_dump(DbRes *dres, char **out, size_t *olen) {
     Buf buf;
 
+    *out = NULL;
+    *olen = 0;
     buf_init(&buf);
-    if (!buf_put(&buf, "{\"ok\":true,\"data\":{\"rows\":") ||
-        !add_rows(&buf, dres) ||
-        !buf_fmt(&buf, ",\"count\":%d", dres->count)) {
+    if (!sql_data(&buf, dres)) {
         buf_free(&buf);
         return 0;
     }
-    if (dres->last_id > 0 && !buf_fmt(&buf, ",\"last_id\":%ld", dres->last_id)) {
+    *out = buf.buf;
+    *olen = buf.len;
+    memset(&buf, 0, sizeof(buf));
+    return 1;
+}
+
+static int sql_ok_data(HttpRes *res,
+                       const HttpReq *req,
+                       const char *data,
+                       size_t data_len,
+                       int tid,
+                       long lat_ms) {
+    Buf buf;
+
+    buf_init(&buf);
+    if (!buf_put(&buf, "{\"ok\":true,\"data\":")) {
         buf_free(&buf);
         return 0;
+    }
+    if (data_len > 0) {
+        if (buf.cap < buf.len + data_len + 1) {
+            size_t cap = buf.cap == 0 ? 256 : buf.cap;
+            char *nbuf;
+
+            while (cap < buf.len + data_len + 1) cap *= 2;
+            nbuf = (char *)realloc(buf.buf, cap);
+            if (!nbuf) {
+                buf_free(&buf);
+                return 0;
+            }
+            buf.buf = nbuf;
+            buf.cap = cap;
+        }
+        memcpy(buf.buf + buf.len, data, data_len);
+        buf.len += data_len;
+        buf.buf[buf.len] = '\0';
     }
     if (!buf_chr(&buf, '}') || !add_meta(&buf, req, tid, lat_ms)) {
         buf_free(&buf);
         return 0;
     }
     return res_set(res, 200, &buf);
+}
+
+static int sql_ok(HttpRes *res, const HttpReq *req, DbRes *dres, int tid, long lat_ms) {
+    char *data = NULL;
+    size_t data_len = 0;
+    int ok;
+
+    if (!sql_data_dump(dres, &data, &data_len)) return 0;
+    ok = sql_ok_data(res, req, data, data_len, tid, lat_ms);
+    free(data);
+    return ok;
 }
 
 static int batch_ok(HttpRes *res, const HttpReq *req, DbRes *resv, int rcnt, long lat_ms) {
@@ -427,8 +494,17 @@ static int do_health(const HttpReq *req, HttpRes *res) {
 
 static int do_sql(Srv *srv, const HttpReq *req, HttpRes *res) {
     char *sql = NULL;
+    char *data_json = NULL;
+    char *cached_data = NULL;
+    size_t data_len = 0;
+    size_t cached_len = 0;
     DbRes dres;
+    Statement stmt;
     long start = now_ms();
+    unsigned long long ns0;
+    unsigned long long table_ver = 0;
+    int can_cache = 0;
+    int cache_hit = 0;
     int rc;
     int tid = pool_tid();
 
@@ -444,16 +520,46 @@ static int do_sql(Srv *srv, const HttpReq *req, HttpRes *res) {
         free(sql);
         return err_res(res, 400, rc < 0 ? "OOM" : "BAD_REQ", "missing query", req->req_id);
     }
+    if (parse_statement(sql, &stmt) && stmt.type == STMT_SELECT && stmt.table_name[0] != '\0') {
+        can_cache = 1;
+        ns0 = now_ns();
+        table_ver = db_tab_ver(srv->db, stmt.table_name);
+        api_stats_add_lock_wait_ns(now_ns() - ns0);
+        if (table_ver > 0 && query_cache_lookup(sql, table_ver, &cached_data, &cached_len)) {
+            cache_hit = 1;
+            api_stats_note_cache_hit();
+            ns0 = now_ns();
+            sql_ok_data(res, req, cached_data, cached_len, tid, now_ms() - start);
+            api_stats_add_json_ns(now_ns() - ns0);
+            free(cached_data);
+            free(sql);
+            return 1;
+        }
+        api_stats_note_cache_miss();
+    }
+    ns0 = now_ns();
     rc = db_exec(srv->db, sql, &dres);
-    free(sql);
+    api_stats_add_engine_ns(now_ns() - ns0);
     if (rc != 0) {
         int http = http_of(dres.err.code);
         err_res(res, http, dres.err.code[0] ? dres.err.code : "BAD_SQL",
                 dres.err.msg ? dres.err.msg : "query failed", req->req_id);
+        free(sql);
         db_free(&dres);
         return 1;
     }
-    sql_ok(res, req, &dres, tid, now_ms() - start);
+    ns0 = now_ns();
+    if (sql_data_dump(&dres, &data_json, &data_len)) {
+        sql_ok_data(res, req, data_json, data_len, tid, now_ms() - start);
+    } else {
+        sql_ok(res, req, &dres, tid, now_ms() - start);
+    }
+    api_stats_add_json_ns(now_ns() - ns0);
+    if (can_cache && !cache_hit && table_ver > 0 && data_json) {
+        query_cache_store(sql, table_ver, data_json, data_len);
+    }
+    free(data_json);
+    free(sql);
     db_free(&dres);
     return 1;
 }
@@ -532,7 +638,12 @@ static int do_batch(Srv *srv, const HttpReq *req, HttpRes *res, int force_tx) {
         }
         free(jobs);
         db_done(srv->db, snap);
-        batch_ok(res, req, resv, sqln, now_ms() - start);
+        api_stats_add_engine_ns((unsigned long long)(now_ms() - start) * 1000000ULL);
+        {
+            unsigned long long j0 = now_ns();
+            batch_ok(res, req, resv, sqln, now_ms() - start);
+            api_stats_add_json_ns(now_ns() - j0);
+        }
         for (i = 0; i < sqln; i++) db_free(&resv[i]);
         free(resv);
         free_arr(sqlv, sqln);
@@ -546,11 +657,19 @@ static int do_batch(Srv *srv, const HttpReq *req, HttpRes *res, int force_tx) {
         bat.sqlv = (const char **)sqlv;
         bat.sqln = sqln;
         bat.tx = tx;
-        ok = db_batch(srv->db, &bat, &resv, &rcnt) == 0;
-        if (tx && !ok) {
-            tx_res(res, req, resv, rcnt, now_ms() - start, 0);
-        } else {
-            batch_ok(res, req, resv, rcnt, now_ms() - start);
+        {
+            unsigned long long e0 = now_ns();
+            ok = db_batch(srv->db, &bat, &resv, &rcnt) == 0;
+            api_stats_add_engine_ns(now_ns() - e0);
+        }
+        {
+            unsigned long long j0 = now_ns();
+            if (tx && !ok) {
+                tx_res(res, req, resv, rcnt, now_ms() - start, 0);
+            } else {
+                batch_ok(res, req, resv, rcnt, now_ms() - start);
+            }
+            api_stats_add_json_ns(now_ns() - j0);
         }
     }
     for (i = 0; i < rcnt; i++) db_free(&resv[i]);
@@ -649,20 +768,30 @@ static int do_mst(Srv *srv, const HttpReq *req, HttpRes *res) {
     PoolSt ap;
     PoolSt dp;
     DbMst mst;
+    ApiStatsSnapshot st;
     Buf buf;
 
     pool_stat(srv->apip, &ap);
     pool_stat(srv->dbp, &dp);
     db_mst(srv->db, &mst);
+    api_stats_snapshot(&st);
     buf_init(&buf);
     if (!buf_fmt(&buf,
                  "{\"ok\":true,\"data\":{\"api_pool\":{\"size\":%d,\"active\":%d,\"queued\":%d,\"done\":%lu},"
                  "\"db_pool\":{\"size\":%d,\"active\":%d,\"queued\":%d,\"done\":%lu},"
-                 "\"mvcc\":{\"tx_live\":%lu,\"snap_min\":%lu,\"ver_now\":%lu,\"gc_wait\":%lu}},"
+                 "\"mvcc\":{\"tx_live\":%lu,\"snap_min\":%lu,\"ver_now\":%lu,\"gc_wait\":%lu},"
+                 "\"http\":{\"uptime_ms\":%llu,\"total_requests\":%llu,\"inflight_requests\":%llu,"
+                 "\"ok_responses\":%llu,\"error_responses\":%llu,\"status_503\":%llu,\"keep_alive_reuse\":%llu},"
+                 "\"cache\":{\"hits\":%llu,\"misses\":%llu},"
+                 "\"timing_ns\":{\"parse\":%llu,\"lock_wait\":%llu,\"engine\":%llu,\"json\":%llu,\"send\":%llu}},"
                  "\"meta\":{\"req_id\":",
                  ap.size, ap.active, ap.queued, ap.done,
                  dp.size, dp.active, dp.queued, dp.done,
-                 mst.tx_live, mst.snap_min, mst.ver_now, mst.gc_wait) ||
+                 mst.tx_live, mst.snap_min, mst.ver_now, mst.gc_wait,
+                 st.uptime_ms, st.total_requests, st.inflight_requests,
+                 st.ok_responses, st.error_responses, st.status_503, st.keep_alive_reuse,
+                 st.cache_hits, st.cache_misses,
+                 st.parse_ns, st.lock_wait_ns, st.engine_ns, st.json_ns, st.send_ns) ||
         !buf_jsn(&buf, req->req_id) ||
         !buf_put(&buf, "}}")) {
         buf_free(&buf);

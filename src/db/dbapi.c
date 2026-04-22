@@ -1240,6 +1240,18 @@ static void tx_free(DbTx *tx) {
     free(tx);
 }
 
+unsigned long long db_tab_ver(Db *db, const char *table) {
+    TabEnt *ent;
+    unsigned long long ver = 0;
+
+    if (!db || !table || table[0] == '\0') return 0;
+    pthread_mutex_lock(&db->mu);
+    ent = need_ent(db, table);
+    if (ent && ent->head) ver = ent->head->ver_id;
+    pthread_mutex_unlock(&db->mu);
+    return ver;
+}
+
 int db_txdo(DbTx *tx, const char *sql, DbRes *res) {
     Statement stmt;
     TxTab *item;

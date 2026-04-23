@@ -1,3 +1,5 @@
+<img width="224" height="224" alt="image" src="https://github.com/user-attachments/assets/10ab8f24-5ae5-49b2-92cb-cd1ab0656373" />
+
 # 🗄️ Mini DBMS API Server
 
 기존 SQL 처리기를 REST API 서버로 확장한 프로젝트입니다.  

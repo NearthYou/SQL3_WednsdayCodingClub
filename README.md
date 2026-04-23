@@ -1,12 +1,6 @@
 # 🗄️ Mini DBMS API Server
 
-<<<<<<< HEAD
-기존 C 기반 SQL 처리기를 REST API 서버로 확장한 프로젝트입니다.  
-=======
-> C 기반 SQL 엔진을 API 서버로 확장한 동시성 데모 프로젝트
->>>>>>> 56d7949 (docs: README 시각화 정리 및 발표 스크립트 갱신)
-
-</div>
+기존 SQL 처리기를 REST API 서버로 확장한 프로젝트입니다.  
 
 ---
 

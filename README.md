@@ -1,38 +1,37 @@
 # Mini DBMS API Server
 
-기존 C 기반 SQL 처리기를 REST API 서버로 확장한 프로젝트입니다.
+기존 C 기반 SQL 처리기를 REST API 서버로 확장한 프로젝트입니다.  
+핵심은 **동시성 처리**, **트랜잭션 정합성**, **시연 가능한 데모**입니다.
 
-## 핵심 구성
+## 한눈에 보기
 
 - API 서버: `src/api`
 - 스레드 풀: `src/thr/pool.c`
-- DB 엔진: `src/db/dbapi.c`, `src/db/mvcc.c`
+- DB 엔진(MVCC): `src/db/dbapi.c`, `src/db/mvcc.c`
 - 인덱스: `src/legacy/bptree.c`
-- 데모 페이지: `web/demo.js`, `web/demo.css`
+- 데모 UI: `web/demo.js`, `web/demo.css`
 
-## 현재 동시성 정책 (중요)
+## 빠른 실행
 
-### 1) MVCC + optimistic commit
+```bash
+make build
+./bin/dbsrv
+```
 
-- 읽기: snapshot 기준으로 일관성 보장
-- 쓰기: private working copy에 반영 후 commit 시 충돌 검사
+서버 확인:
 
-### 2) write retry
+```bash
+curl http://localhost:8080/api/v1/health
+```
 
-- 쓰기 충돌 시 backoff 재시도
-- 설정 위치: `src/db/dbapi.c`
-  - `WRITE_RETRY_MAX`
-  - `WRITE_RETRY_BASE_US`
-  - `WRITE_RETRY_CAP_US`
+Docker 실행:
 
-### 3) row-level write lock (table + id shard lock)
+```bash
+docker build -t sqlprocessor:local .
+docker run --rm -p 8080:8080 sqlprocessor:local ./bin/dbsrv
+```
 
-- `/api/v1/sql` 단건 쓰기 경로에서 `table + id` 기준으로 락 샤딩
-- 같은 row(id) 동시 쓰기는 직렬화
-- 다른 id는 병렬 처리
-- 목적: 동시 쓰기 성공률 개선 (충돌성 쓰기 테스트에서 100% 성공 확인)
-
-## API
+## API 목록
 
 - `GET /api/v1/health`
 - `POST /api/v1/sql`
@@ -41,29 +40,51 @@
 - `GET /api/v1/page`
 - `GET /api/v1/metrics`
 
-## 데모
+## 프로젝트 특징
 
-웹 데모는 단계별 시나리오를 제공합니다.
+- C 기반 SQL 엔진을 REST API 서버로 확장
+- API Worker Pool + DB Query Pool 이중 풀 구조
+- `/api/v1/page` 병렬 조회 시 trace로 동작 확인 가능
+- 트랜잭션 롤백/캐시/부하 시연까지 한 화면 데모 제공
+- CSV + B+Tree 기반 엔진을 유지하면서 동시성 처리 강화
 
-- 5단계: 동시 요청 레벨(8/16/32) 비교
-- 6단계: 읽기/쓰기 혼합 부하
-  - `SELECT /api/v1/sql` 50%
-  - `UPDATE /api/v1/sql` 30%
-  - `GET /api/v1/page` 20%
+## 동시성 정책 (MVCC + Row-level Lock)
 
-## 실행
+### 1) MVCC + Optimistic Commit
 
-```bash
-make build
-./bin/dbsrv
-```
+- 읽기: snapshot 기준으로 일관성 보장
+- 쓰기: private working copy에서 처리 후 commit 시 충돌 검사
 
-또는 Docker:
+### 3) Row-level Write Lock (table + id shard)
 
-```bash
-docker build -t sqlprocessor:local .
-docker run --rm -p 8080:8080 sqlprocessor:local ./bin/dbsrv
-```
+- `/api/v1/sql` 단건 쓰기 경로에서 `table + id` 기준 락 샤딩
+- 같은 row(id) 쓰기는 직렬화
+- 다른 id는 병렬 처리
+
+### 둘을 함께 쓸 때 막는 상황
+
+- MVCC가 막는 것:
+  - 읽는 도중 다른 트랜잭션이 커밋해도 “중간 상태가 섞여 보이는 문제”
+  - 트랜잭션 단위의 읽기 일관성 붕괴
+- Row-level lock이 막는 것:
+  - 같은 `table+id`를 동시에 갱신할 때 발생하는 write-write 충돌
+  - 동일 row 동시 쓰기에서의 실패 급증
+
+정리하면, **MVCC는 읽기 일관성**, **row-level lock은 동일 row 동시 쓰기 충돌**을 담당합니다.
+
+## 데모 시나리오
+
+### 5단계
+
+- 동시 요청 레벨(8/16/32) 성능 비교
+
+### 6단계 (혼합 부하)
+
+- `SELECT /api/v1/sql`: 50%
+- `UPDATE /api/v1/sql`: 30%
+- `GET /api/v1/page`: 20%
+
+즉, 읽기 전용이 아니라 **읽기/쓰기 혼합** 상황을 시연합니다.
 
 ## 테스트
 
@@ -78,4 +99,3 @@ make test
 - `tests/test_dbapi.c`
 - `tests/test_tx.c`
 - `tests/api_test.sh`
-

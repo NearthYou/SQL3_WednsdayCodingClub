@@ -1,123 +1,162 @@
-# 발표 대본
+# 발표 스크립트 (최신 버전)
 
 ## 0. 오프닝
 
-안녕하세요. 저희 프로젝트는 기존 C 기반 미니 SQL 처리기를 REST API 서버 형태로 확장한 Mini DBMS API Server입니다.
+안녕하세요. 저희는 기존 C 기반 SQL 처리기를 실제 요청을 받는 API 서버 형태로 확장했습니다.  
+오늘 발표는 다음 3가지를 중심으로 보시면 됩니다.
 
-기존 프로젝트는 SQL 파일을 입력으로 받아 lexer, parser, executor를 거쳐 CSV와 B+Tree 인덱스를 사용하는 CLI 중심 구조였습니다. 이번에는 여기에 API 서버, thread pool, MVCC transaction, rollback, metrics, 테스트와 CI를 추가해서 외부 클라이언트가 실제로 요청을 보낼 수 있는 서버형 구조로 발전시켰습니다.
+1. 구조를 어떻게 바꿨는지
+2. 동시성에서 무엇을 막았는지
+3. 데모에서 어떤 결과를 확인할 수 있는지
 
-## 1. Before -> After
+[여기에 프로젝트 한 줄 요약이 들어간 타이틀 슬라이드 그림]
 
-먼저 전체 변화입니다.
+---
 
-Before는 SQL 파일을 읽고 내부 실행기가 바로 CSV를 조작하는 구조였습니다. 엔진 구현을 보기에는 좋지만, 외부 시스템이 접근하거나 동시 요청을 처리하는 구조는 아니었습니다.
+## 1. 문제 정의
 
-After는 HTTP client가 API server로 요청을 보내고, API worker pool이 요청을 처리한 뒤 DB API와 MVCC engine으로 내려가는 구조입니다. 기존 B+Tree와 CSV 저장 방식은 살리면서, 서버로 사용할 수 있도록 계층을 추가했습니다.
+기존 코드는 CLI 중심이라 SQL 파일 실행에는 적합했지만, 동시에 들어오는 웹 요청을 처리하기에는 한계가 있었습니다.  
+핵심 과제는 2가지였습니다.
 
-핵심 변화는 다섯 가지입니다. CLI에서 REST API로 확장했고, 단일 실행 흐름에서 thread pool 기반으로 바뀌었습니다. 또 `/sql`, `/batch`, `/tx`, `/page`, `/metrics` endpoint를 만들었고, table-snapshot copy-on-write 방식의 MVCC를 추가했습니다. 마지막으로 `make test`와 GitHub Actions로 검증 흐름을 만들었습니다.
+- 읽기 일관성을 깨지 않기
+- 동시 쓰기 충돌에서 실패율을 낮추기
 
-## 2. 전체 구조
+[여기에 Before(단일 실행) vs After(동시 요청) 비교 그림]
 
-전체 구조를 보면 위쪽에는 client와 HTTP API server가 있습니다. API server는 request를 API worker pool에 넣고, worker가 route layer로 넘깁니다.
+---
 
-route layer는 요청 종류에 따라 DB API를 호출합니다. 일반 SQL은 바로 DB API로 내려가고, `/page`처럼 여러 조회가 필요한 요청은 DB Query Pool을 사용해서 병렬로 SELECT를 실행합니다.
+## 2. 최종 구조
 
-DB API 아래에는 MVCC engine이 있고, 실제 데이터는 `data/*.csv`에 저장됩니다. 인덱스는 기존 legacy B+Tree 구현을 재사용했습니다. 즉, 새로 만든 서버 계층과 기존 SQL 엔진 자산을 연결한 구조입니다.
+현재 구조는 `API 서버 + 스레드풀 + MVCC 엔진`입니다.
 
-## 3. 핵심 메시지
+- API 계층: `/sql`, `/batch`, `/tx`, `/page`, `/metrics`
+- 실행 계층: API Worker Pool, DB Query Pool
+- 저장/엔진: CSV + B+Tree, MVCC
 
-이번 확장의 핵심 키워드는 API Server, Thread Pool, MVCC, Demo, Quality입니다.
+요청은 API Worker가 받고, 병렬 조회가 필요한 경우 DB Query Pool에서 분기 실행합니다.
 
-API Server는 기존 엔진을 외부에서 호출 가능하게 만든 부분입니다. Thread Pool은 요청마다 thread를 새로 만들지 않고 고정 worker와 queue로 처리하는 구조입니다.
+[여기에 전체 아키텍처 다이어그램 그림]
 
-MVCC는 읽기 일관성과 rollback을 보여주기 위한 핵심입니다. read는 snapshot을 보고, write는 private working copy에 반영한 뒤 commit 시점에 충돌을 확인합니다.
+---
 
-Demo 측면에서는 `/page`, `/metrics`, `/tx`를 준비했습니다. Quality 측면에서는 unit test, API smoke test, CI를 추가했습니다.
+## 3. 프로젝트 특징
 
-## 4. 요청 처리 흐름
+- C 기반 SQL 엔진을 REST API 서버로 확장
+- API Worker Pool + DB Query Pool 이중 풀 구조
+- `/api/v1/page`에서 병렬 trace 확인 가능
+- 트랜잭션 롤백, 캐시, 부하 테스트를 데모 페이지에서 통합 시연
+- 기존 CSV + B+Tree 자산을 유지한 채 동시성 강화
 
-요청 하나가 들어오면 먼저 HTTP API server가 request를 받습니다. 이 request는 API pool에 job으로 들어가고, worker가 route dispatch를 수행합니다.
+[여기에 핵심 특징 5개 아이콘형 요약 그림]
 
-route는 SQL 실행, batch 실행, transaction 실행 같은 작업을 DB API에 요청합니다. DB API는 snapshot이나 transaction context를 만들고 MVCC engine에 접근합니다.
+---
 
-MVCC engine은 현재 snapshot에서 볼 수 있는 table version을 읽거나, commit 시 CSV에 flush합니다. 결과는 `DbRes` 형태로 올라오고, route layer가 JSON response로 변환해서 client에게 돌려줍니다.
+## 4. 동시성 정책: MVCC와 Row-level Lock
 
-이 흐름의 장점은 HTTP 처리, route 처리, DB 처리의 책임이 분리되어 있다는 점입니다.
+### MVCC가 막는 것
 
-## 5. Thread Pool
+- 읽는 도중 다른 트랜잭션 커밋이 있어도 중간 상태가 섞여 보이는 문제
+- 트랜잭션 단위 읽기 일관성 붕괴
 
-Thread pool은 두 종류로 나눴습니다.
+### Row-level Write Lock이 막는 것
 
-첫 번째는 API Worker Pool입니다. 이 pool은 HTTP 요청을 받아 route handler를 실행합니다. 요청마다 thread를 만들지 않고 queue에 넣어서 고정 worker들이 처리합니다.
+- 같은 `table + id`를 동시에 갱신할 때 생기는 write-write 충돌
+- 동일 row 동시 쓰기에서의 실패 급증
 
-두 번째는 DB Query Pool입니다. 이 pool은 `/page`나 read batch처럼 여러 조회를 병렬로 실행할 수 있는 경우에 사용합니다.
+정리하면:
+- **MVCC = 읽기 일관성 담당**
+- **Row-level lock = 동일 row 동시 쓰기 충돌 담당**
 
-특히 `/api/v1/page`는 하나의 페이지 요청을 여러 SQL로 분해합니다. 예를 들어 음식점 목록, 주문 정보, 쿠폰, 장바구니 같은 데이터를 같은 snapshot에서 병렬로 조회합니다. 응답에는 thread id와 latency trace가 포함되어서 병렬 실행을 발표 중에 확인할 수 있습니다.
+[여기에 MVCC와 Row-level Lock 역할 분리 그림]
 
-## 6. MVCC Transaction
+---
 
-이번 프로젝트의 동시성 제어는 row-level MVCC가 아니라 table-snapshot copy-on-write MVCC입니다.
+## 5. 구현 포인트
 
-Transaction이 시작되면 snapshot id를 잡습니다. read는 그 시점에 보이는 committed version만 읽습니다.
+### 5-1) MVCC
 
-write가 발생하면 바로 원본 table을 수정하지 않습니다. first write 시점에 현재 table version을 private working copy로 복사하고, 모든 변경은 그 copy에 반영합니다.
+- read는 snapshot 기준으로 수행
+- write는 private working copy에 반영
+- commit 시 충돌 검사 후 install
 
-commit 시점에는 transaction이 시작할 때의 base version과 현재 head version이 같은지 확인합니다. 같으면 새 committed version으로 install하고, 다르면 write conflict로 abort합니다.
+### 5-2) Row-level Write Lock
 
-rollback은 단순합니다. 원본을 건드리지 않았기 때문에 private working copy만 버리면 됩니다.
+- `/api/v1/sql` 단건 쓰기 경로에서 `table+id` 기준 shard lock
+- 같은 id 쓰기는 직렬화, 다른 id는 병렬 허용
 
-## 7. API Demo Flow
+[여기에 동일 id 직렬화 / 다른 id 병렬 처리 그림]
 
-데모는 일곱 단계로 진행하면 됩니다.
+---
 
-첫 번째, `make` 후 `./bin/dbsrv`로 서버를 실행합니다.
+## 6. 데모 시나리오
 
-두 번째, `/api/v1/health`로 서버가 살아있는지 확인합니다.
+### 5단계: 동시 요청 레벨 비교
 
-세 번째, `/api/v1/sql`로 단일 SQL이 REST API를 통해 실행되는 것을 보여줍니다.
+- concurrency 8 / 16 / 32 비교
+- `total_ms`, `p95`, `rps`, `fail_rate`로 확인
 
-네 번째, `/api/v1/page`를 호출해서 하나의 페이지 요청이 여러 SQL로 분해되고 DB Query Pool에서 병렬 실행되는 것을 보여줍니다.
+### 6단계: 혼합 부하
 
-다섯 번째, `/api/v1/metrics`로 API pool, DB pool, MVCC 상태를 확인합니다.
+- `SELECT /api/v1/sql` 50%
+- `UPDATE /api/v1/sql` 30%
+- `GET /api/v1/page` 20%
 
-여섯 번째, `/api/v1/tx`에 정상 INSERT와 잘못된 SQL을 같이 넣어서 rollback을 시연합니다.
+즉, 읽기 전용이 아니라 실제에 가까운 읽기/쓰기 혼합 시나리오입니다.
 
-마지막으로 `make test`로 구현이 테스트되고 있다는 점을 보여줍니다.
+[여기에 데모 페이지 5,6단계 스크린샷 그림]
 
-## 8. Rollback 시연
+---
 
-Rollback 시연은 이 프로젝트에서 가장 보여주기 쉬운 포인트입니다.
+## 7. 성능/안정성 결과 (발표 핵심 수치)
 
-client가 transaction으로 INSERT를 보냅니다. 이 INSERT는 committed table에 바로 반영되지 않고 working copy에만 적용됩니다.
+동일 조건(`UPDATE only`, 32 VU, 20초) 기준:
 
-그 다음 두 번째 query로 잘못된 SQL을 보냅니다. transaction은 실패 지점을 `fail_at`으로 응답하고 abort됩니다.
+- 재시도/락 적용 전: 실패율이 매우 높게 발생(충돌 상황에서 대량 실패)
+- 재시도 + row-level lock 적용 후: **성공률 100%** 확인
 
-abort되면 working copy를 버립니다. 그래서 앞에서 성공한 것처럼 보였던 INSERT도 최종 committed data에는 남지 않습니다.
+발표에서는 “왜 성공률이 올라갔는지”를 동시성 정책과 연결해서 설명하면 설득력이 높습니다.
 
-이 방식은 파일 백업을 해두고 되돌리는 방식이 아니라, 애초에 commit 전까지 원본을 수정하지 않는 방식이라 구조가 단순합니다.
+[여기에 적용 전/후 성공률 비교 막대 그래프 그림]
 
-## 9. Test & CI
+---
 
-테스트는 thread pool, MVCC, DB API, transaction을 각각 나눠서 검증합니다.
+## 8. 트랜잭션 정합성
 
-`tests/test_pool.c`는 queue와 worker 동작을 확인합니다. `tests/test_mvcc.c`는 snapshot과 version 동작을 확인합니다. `tests/test_dbapi.c`는 DB API가 SQL 결과를 잘 반환하는지 확인합니다. `tests/test_tx.c`는 commit과 rollback을 검증합니다.
+`/api/v1/tx`에서 중간 SQL 실패 시 전체 롤백을 시연할 수 있습니다.
 
-추가로 `tests/api_test.sh`는 실제 서버를 띄운 뒤 API endpoint를 호출하는 smoke test입니다.
+- 성공 전까지 원본 반영 없음
+- 실패 시 working copy 폐기
+- 결과적으로 부분 반영 없이 정합성 유지
 
-이 테스트들은 `make test`로 실행되고, GitHub Actions에도 연결되어 있습니다.
+[여기에 트랜잭션 성공/실패 분기 그림]
+
+---
+
+## 9. 테스트/검증
+
+- `make test`
+- `tests/test_pool.c`
+- `tests/test_mvcc.c`
+- `tests/test_dbapi.c`
+- `tests/test_tx.c`
+- `tests/api_test.sh`
+
+코드 레벨 테스트와 API 스모크 테스트를 함께 운영합니다.
+
+[여기에 테스트 실행 결과 요약 화면 그림]
+
+---
 
 ## 10. 마무리
 
-정리하면, 기존 프로젝트는 미니 SQL 엔진의 내부 구현에 강점이 있었습니다. 이번 확장에서는 그 엔진을 서버로 감싸고, thread pool과 MVCC transaction을 추가해서 시스템 설계 관점의 프로젝트로 확장했습니다.
+이번 프로젝트의 결론은 명확합니다.
 
-발표의 핵심 흐름은 네 가지입니다.
+1. CLI 엔진을 실제 서비스형 API 구조로 확장했다.
+2. MVCC로 읽기 일관성을 확보했다.
+3. Row-level lock으로 동일 row 동시 쓰기 충돌을 제어했다.
+4. 데모와 부하 테스트에서 결과를 수치로 검증했다.
 
-첫째, CLI 엔진을 REST API 서버로 확장했습니다.
+감사합니다.
 
-둘째, API Worker Pool과 DB Query Pool로 병렬 처리 구조를 만들었습니다.
+[여기에 최종 요약 4줄 카드형 그림]
 
-셋째, table-snapshot copy-on-write MVCC로 snapshot read, conflict detect, rollback을 구현했습니다.
-
-넷째, `/page`, `/metrics`, `/tx`와 테스트/CI로 시연성과 검증 가능성을 확보했습니다.
-
-한 줄로 말하면, 이 프로젝트는 C 기반 미니 SQL 처리기를 외부에서 접근 가능한 동시성 DBMS API 서버로 확장한 작업입니다.

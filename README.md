@@ -186,8 +186,6 @@ curl -X POST http://localhost:8080/api/v1/tx \
   -H "Content-Type: application/json" \
   -d '{"sqls": ["INSERT INTO users VALUES (1,\"alice\")", "UPDATE users SET name=\"bob\" WHERE id=1"]}'
 ```
-
-<<<<<<< HEAD
 Docker 실행:
 
 ```bash
@@ -237,9 +235,8 @@ docker run --rm -p 8080:8080 sqlprocessor:local ./bin/dbsrv
 정리하면, **MVCC는 읽기 일관성**, **row-level lock은 동일 row 동시 쓰기 충돌**을 담당합니다.
 
 즉, 읽기 전용이 아니라 **읽기/쓰기 혼합** 상황을 시연합니다.
-=======
+
 ---
->>>>>>> 56d7949 (docs: README 시각화 정리 및 발표 스크립트 갱신)
 
 ## 테스트
 

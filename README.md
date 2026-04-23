@@ -71,18 +71,6 @@ docker run --rm -p 8080:8080 sqlprocessor:local ./bin/dbsrv
 
 정리하면, **MVCC는 읽기 일관성**, **row-level lock은 동일 row 동시 쓰기 충돌**을 담당합니다.
 
-## 데모 시나리오
-
-### 5단계
-
-- 동시 요청 레벨(8/16/32) 성능 비교
-
-### 6단계 (혼합 부하)
-
-- `SELECT /api/v1/sql`: 50%
-- `UPDATE /api/v1/sql`: 30%
-- `GET /api/v1/page`: 20%
-
 즉, 읽기 전용이 아니라 **읽기/쓰기 혼합** 상황을 시연합니다.
 
 ## 테스트

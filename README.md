@@ -1,4 +1,4 @@
-<img width="224" height="224" alt="image" src="https://github.com/user-attachments/assets/10ab8f24-5ae5-49b2-92cb-cd1ab0656373" />
+<img width="300" height="300" alt="image" src="https://github.com/user-attachments/assets/10ab8f24-5ae5-49b2-92cb-cd1ab0656373" />
 
 # 🗄️ Mini DBMS API Server
 

@@ -7,8 +7,8 @@
 #include <time.h>
 
 #define TABLE_NAME "jungle_workload_users"
-#define SOURCE_CSV "jungle_benchmark_users.csv"
-#define WORKLOAD_CSV "jungle_workload_users.csv"
+#define SOURCE_CSV "data/legacy/jungle_benchmark_users.csv"
+#define WORKLOAD_CSV "data/legacy/jungle_workload_users.csv"
 
 #if defined(_WIN32)
 #define SQLPROCESSOR_CMD "sqlsprocessor.exe"

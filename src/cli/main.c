@@ -3,12 +3,15 @@
 #include <ctype.h>
 #include <stdlib.h>
 #if defined(_WIN32)
+#include <direct.h>
 #include <windows.h>
+#else
+#include <unistd.h>
 #endif
 
-#include "types.h"
-#include "parser.h"
-#include "executor.h"
+#include "../legacy/types.h"
+#include "../legacy/parser.h"
+#include "../legacy/executor.h"
 
 #if defined(BENCH_MEMTRACK)
 typedef struct BenchAllocHeader {
@@ -107,6 +110,21 @@ static void configure_console_encoding(void) {
     SetConsoleOutputCP(CP_UTF8);
     SetConsoleCP(CP_UTF8);
 #endif
+}
+
+static int enter_legacy_root(void) {
+    const char *root = getenv("LEGACY_ROOT");
+    const char *path = (root && root[0]) ? root : "data/legacy";
+
+#if defined(_WIN32)
+    if (_chdir(path) != 0) {
+#else
+    if (chdir(path) != 0) {
+#endif
+        printf("[오류] legacy data 폴더로 이동할 수 없습니다: %s\n", path);
+        return 0;
+    }
+    return 1;
 }
 
 static int try_execute_insert_fast(const char *sql);
@@ -392,18 +410,21 @@ int main(int argc, char *argv[]) {
     if (argi < argc && strcmp(argv[argi], "--generate-jungle") == 0) {
         int count = (argi + 1 < argc) ? atoi(argv[argi + 1]) : 1000000;
         const char *output = (argi + 2 < argc) ? argv[argi + 2] : NULL;
+        if (!enter_legacy_root()) return 1;
         generate_jungle_dataset(count, output);
         return 0;
     }
 
     if (argi < argc && strcmp(argv[argi], "--benchmark") == 0) {
         int count = (argi + 1 < argc) ? atoi(argv[argi + 1]) : 1000000;
+        if (!enter_legacy_root()) return 1;
         run_bplus_benchmark(count);
         close_all_tables();
         return 0;
     }
     if (argi < argc && strcmp(argv[argi], "--benchmark-jungle") == 0) {
         int count = (argi + 1 < argc) ? atoi(argv[argi + 1]) : 1000000;
+        if (!enter_legacy_root()) return 1;
         run_jungle_benchmark(count);
         return 0;
     }
@@ -419,6 +440,10 @@ int main(int argc, char *argv[]) {
     FILE *f = fopen(filename, "r");
     if (!f) {
         printf("[오류] '%s' 파일을 열 수 없습니다.\n", filename);
+        return 1;
+    }
+    if (!enter_legacy_root()) {
+        fclose(f);
         return 1;
     }
 
@@ -482,7 +507,7 @@ int main(int argc, char *argv[]) {
  * 일부 IDE/에디터는 "현재 파일만 컴파일" 방식으로 main.c 하나만 빌드합니다.
  * 그 경우에도 바로 실행되도록 구현 파일을 여기서 함께 포함합니다.
  */
-#include "lexer.c"
-#include "parser.c"
-#include "bptree.c"
-#include "executor.c"
+#include "../legacy/lexer.c"
+#include "../legacy/parser.c"
+#include "../legacy/bptree.c"
+#include "../legacy/executor.c"

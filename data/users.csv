@@ -1,0 +1,4 @@
+id(PK),email(UK),name(NN),age
+1,admin@test.com,Admin,30
+2,user1@test.com,UserOne,22
+3,user2@test.com,UserTwo,25

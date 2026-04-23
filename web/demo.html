@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mini DBMS 시연 페이지</title>
+  <link rel="stylesheet" href="/demo.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Mini DBMS 시연</div>
+    <div class="badge" id="server-badge">서버 상태: 확인 전</div>
+  </header>
+  <main class="shell">
+    <section class="hero">
+      <p class="eyebrow">Live API Demo</p>
+      <h1>눈으로 바로 보이는 단계형 시연</h1>
+      <p class="summary">요약 카드 + 상태 변화 + 콘솔 로그 중심으로 구성했습니다.</p>
+    </section>
+
+    <section class="scenario-list" id="scenario-list"></section>
+
+    <section class="console-wrap">
+      <div class="console-head">
+        <h2>실행 로그</h2>
+        <button type="button" id="console-clear">지우기</button>
+      </div>
+      <pre class="console-output" id="console-output">[대기] 시연을 시작하세요.</pre>
+    </section>
+  </main>
+
+  <script src="/demo.js"></script>
+</body>
+</html>

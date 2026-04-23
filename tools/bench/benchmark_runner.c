@@ -233,8 +233,8 @@ static int parse_benchmark_output(const char *output, Throughput *thru) {
 }
 
 static int reset_workload_csv_header(void) {
-    FILE *src = fopen("jungle_benchmark_users.csv", "r");
-    FILE *dst = fopen("jungle_workload_users.csv", "w");
+    FILE *src = fopen("data/legacy/jungle_benchmark_users.csv", "r");
+    FILE *dst = fopen("data/legacy/jungle_workload_users.csv", "w");
     char line[4096];
     if (!src || !dst) {
         if (src) fclose(src);
@@ -250,8 +250,8 @@ static int reset_workload_csv_header(void) {
     fprintf(dst, "%s\n", line);
     fclose(src);
     fclose(dst);
-    remove("jungle_workload_users.delta");
-    remove("jungle_workload_users.idx");
+    remove("data/legacy/jungle_workload_users.delta");
+    remove("data/legacy/jungle_workload_users.idx");
     return 1;
 }
 
@@ -270,7 +270,7 @@ static int run_sql_file(const char *sql_file, int memtrack, double *elapsed, int
 }
 
 static double max_live_payload_bytes(int rows) {
-    FILE *f = fopen("jungle_benchmark_users.csv", "r");
+    FILE *f = fopen("data/legacy/jungle_benchmark_users.csv", "r");
     char line[4096];
     int count = 0;
     double total = 0.0;
@@ -458,13 +458,13 @@ int main(int argc, char **argv) {
 
     if (opt.memtrack) {
 #if defined(_WIN32)
-        rc = system("gcc -O2 -fdiagnostics-color=always -g -DBENCH_MEMTRACK main.c -o sqlsprocessor.exe");
+        rc = system("gcc -I. -Isrc -Isrc/legacy -O2 -fdiagnostics-color=always -g -DBENCH_MEMTRACK src/cli/main.c -o sqlsprocessor.exe");
 #else
         rc = system("make -B build CFLAGS='-O2 -fdiagnostics-color=always -g -DBENCH_MEMTRACK'");
 #endif
     } else {
 #if defined(_WIN32)
-        rc = system("gcc -O2 -fdiagnostics-color=always -g main.c -o sqlsprocessor.exe");
+        rc = system("gcc -I. -Isrc -Isrc/legacy -O2 -fdiagnostics-color=always -g src/cli/main.c -o sqlsprocessor.exe");
 #else
         rc = system("make -B build CFLAGS='-O2 -fdiagnostics-color=always -g'");
 #endif

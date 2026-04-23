@@ -20,6 +20,10 @@ artifacts/
 bptree_benchmark_users.csv
 bptree_perf_users.csv
 jungle_benchmark_users.csv
+data/legacy/bptree_perf_users.csv
+data/legacy/jungle_benchmark_users.csv
 bench_workload_generator
 benchmark_runner
 bench_formula_test
+bin/
+build/

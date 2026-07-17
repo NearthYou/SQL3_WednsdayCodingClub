@@ -72,7 +72,7 @@ curl http://localhost:8080/api/v1/health
 
 curl -X POST http://localhost:8080/api/v1/sql \
   -H "Content-Type: application/json" \
-  -d '{"sql":"SELECT * FROM users"}'
+  -d '{"query":"SELECT * FROM users"}'
 ```
 
 Docker로도 실행할 수 있습니다.

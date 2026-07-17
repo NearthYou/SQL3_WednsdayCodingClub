@@ -1,173 +1,66 @@
-<img width="300" height="300" alt="image" src="https://github.com/user-attachments/assets/10ab8f24-5ae5-49b2-92cb-cd1ab0656373" />
+# Mini DBMS API Server
 
-# 🗄️ Mini DBMS API Server
+> C로 만든 SQL 처리기를 여러 클라이언트가 사용할 수 있는 트랜잭션 API 서버로 확장한 프로젝트
 
-기존 SQL 처리기를 REST API 서버로 확장한 프로젝트입니다.  
+기존 SQL 처리기에 HTTP 요청이 동시에 들어오면 요청 처리와 DB 작업이 서로 막힐 수 있습니다. 트랜잭션 도중 오류가 났을 때 원본 데이터가 일부만 바뀌는 문제도 막아야 합니다. 이 프로젝트는 POSIX socket과 pthread 위에 API 계층, 이중 스레드 풀, snapshot 기반 트랜잭션을 추가해 이 문제를 다룹니다.
 
----
+## 요청 처리 구조
 
-## 특징
-
-| 항목 | 내용 |
-|------|------|
-| **REST API** | `/sql` `/batch` `/tx` `/page` `/metrics` |
-| **이중 스레드풀** | API Worker Pool + DB Query Pool 분리 |
-| **트랜잭션** | 원자성 보장, 중간 실패 시 자동 롤백 |
-| **동시성 제어** | MVCC(읽기) + Row-level Lock(쓰기) |
-| **영속성** | WAL 기반 강제 종료 후 복구 |
-
----
-
-## API 엔드포인트
-
-```
-GET  /api/v1/health    서버 생존 확인
-POST /api/v1/sql       SQL 단건 실행
-POST /api/v1/batch     SQL 다건 일괄 실행
-POST /api/v1/tx        트랜잭션 묶음 실행
-GET  /api/v1/page      병렬 조회 + trace 반환
-GET  /api/v1/metrics   서버 상태 조회
+```text
+Client
+→ HTTP API
+→ API Worker Pool
+→ Route / DB Adapter
+→ DB Query Pool
+→ SQL Engine
+→ CSV Table · B+ Tree · WAL
 ```
 
-```mermaid
-flowchart LR
-    C(["👤 Client"])
+API 요청을 받는 풀과 병렬 SQL을 실행하는 풀을 분리했습니다. 무거운 쿼리가 API worker를 모두 점유하거나 같은 풀을 다시 기다리는 상황을 피하기 위한 선택입니다.
 
-    C -->|GET| H["🟢 /health\n생존 확인"]
-    C -->|POST| S["⚡ /sql\nSQL 단건"]
-    C -->|POST| B["📦 /batch\nSQL 다건"]
-    C -->|POST| T["🔒 /tx\n트랜잭션"]
-    C -->|GET| P["🔀 /page\n병렬 조회"]
-    C -->|GET| M["📊 /metrics\n서버 상태"]
+## 구현 범위
 
-    style H fill:#1a4a1a,stroke:#2ea043,color:#7ee787
-    style S fill:#1a3a4a,stroke:#1f6feb,color:#79c0ff
-    style B fill:#1a3a4a,stroke:#1f6feb,color:#79c0ff
-    style T fill:#3a1a1a,stroke:#da3633,color:#ffa198
-    style P fill:#2a2a1a,stroke:#d29922,color:#e3b341
-    style M fill:#2a1a3a,stroke:#8b5cf6,color:#c084fc
+| 영역 | 구현 내용 |
+| --- | --- |
+| API | POSIX socket 기반 HTTP server와 JSON 응답 |
+| 동시성 | 고정 크기 API pool, DB query pool, row-level write lock |
+| 읽기 | table-snapshot copy-on-write MVCC |
+| 트랜잭션 | private working copy, rollback, commit conflict detection |
+| 저장 | CSV table, PK·UK B+ Tree, WAL recovery |
+| 관찰 | health, metrics, 병렬 조회 trace |
+
+## 트랜잭션 기준
+
+트랜잭션은 시작 시점의 table snapshot을 읽습니다. 쓰기는 원본이 아니라 private working copy에 적용합니다. 모든 SQL이 성공하고 충돌 검사까지 통과해야 원본에 반영됩니다. 중간 실패나 충돌이 있으면 working copy를 버리므로 원본은 바뀌지 않습니다.
+
+```text
+snapshot 획득
+→ private working copy에서 SQL 실행
+→ commit 직전 version conflict 검사
+→ 성공: WAL 기록 후 반영
+→ 실패: working copy 폐기
 ```
 
----
+### 현재 MVCC의 범위
 
-## 동시성 정책
+이 구현은 row-version chain을 두는 일반적인 MVCC가 아니라 table-snapshot COW 방식입니다. 따라서 충돌도 table 단위로 발생할 수 있습니다.
 
-| 계층 | 담당 | 보장하는 것 |
-|------|------|------------|
-| **MVCC** | 읽기 | 읽는 중 값이 섞여 보이는 현상 차단 |
-| **Row-level Lock** | 쓰기 | 같은 `table+id` 동시 쓰기 충돌 방지 |
+`mv_gc`는 종료된 snapshot을 active snapshot 목록에서 제거합니다. 오래된 row version을 회수하는 함수가 아니며 현재 구현에는 row-version reclamation이 없습니다. `gc_wait`도 남아 있는 active snapshot과 현재 version의 차이를 나타내는 상태값입니다.
 
-```mermaid
-flowchart TB
-    subgraph READ["📖 읽기 경로 — MVCC"]
-        direction LR
-        R1["읽기 요청"] --> R2["Snapshot 생성\n(시작 시점 버전)"]
-        R2 --> R3["버전 기준 조회\n타 트랜잭션 영향 없음"]
-        R3 --> R4["✅ 일관된 결과"]
-    end
+## API
 
-    subgraph WRITE["✏️ 쓰기 경로 — Row-level Lock"]
-        direction LR
-        W1["쓰기 요청\ntable + id"] --> W2{"Lock\n획득 가능?"}
-        W2 -->|Yes| W3["쓰기 실행"]
-        W2 -->|No| W4["대기\n(선행 완료까지)"]
-        W4 --> W3
-        W3 --> W5["✅ 직렬화 완료"]
-    end
+| Method | Endpoint | 역할 |
+| --- | --- | --- |
+| `GET` | `/api/v1/health` | 서버 상태 확인 |
+| `POST` | `/api/v1/sql` | SQL 한 건 실행 |
+| `POST` | `/api/v1/batch` | 여러 SQL 일괄 실행 |
+| `POST` | `/api/v1/tx` | 여러 SQL을 하나의 트랜잭션으로 실행 |
+| `GET` | `/api/v1/page` | 병렬 조회와 trace 반환 |
+| `GET` | `/api/v1/metrics` | pool과 MVCC 상태 확인 |
 
-    style READ fill:#0d1117,stroke:#2ea043
-    style WRITE fill:#0d1117,stroke:#d29922
-```
+## 실행
 
----
-
-## 트랜잭션
-
-> 여러 SQL을 **한 묶음**으로 실행 — 하나라도 실패하면 **전체 취소**
-
-**이 프로젝트에서 보장하는 것**
-
-- **Atomicity** — 전부 성공 또는 전부 롤백
-- **읽기 일관성** — 트랜잭션 시작 시점 snapshot 기준
-- **충돌 감지** — commit 직전 버전 충돌 검사
-
-```mermaid
-sequenceDiagram
-    actor Client
-    participant TX as TX Manager
-    participant WC as Working Copy
-    participant DB as Committed DB
-
-    Client->>TX: POST /tx { sql[] }
-    TX->>WC: 원본 복사 → Working Copy 생성
-
-    loop 각 SQL 순서대로
-        TX->>WC: SQL 적용
-    end
-
-    TX->>TX: commit 직전 버전 충돌 검사
-
-    alt ✅ 전부 성공 + 충돌 없음
-        TX->>DB: Working Copy → 원본 반영
-        TX->>DB: WAL 기록 + 버전 증가
-        TX-->>Client: 200 {"committed": true}
-    else ❌ 중간 실패 or 충돌
-        TX->>WC: Working Copy 폐기
-        Note over WC: 원본 무손상
-        TX-->>Client: 409 {"error": "rollback", "step": N}
-    end
-```
-
----
-
-## 이중 스레드 풀
-
-> "요청 처리"와 "DB 작업"을 분리해 **지연 전파를 차단**
-
-```mermaid
-flowchart LR
-    Req(["🌐 HTTP 요청"])
-
-    subgraph API["API Worker Pool"]
-        AQ[/"📥 API Queue"/]
-        AW1["Worker 1"]
-        AW2["Worker 2"]
-        AW3["Worker N"]
-    end
-
-    subgraph DB["DB Query Pool"]
-        DQ[/"📥 DB Queue"/]
-        DW1["Worker 1"]
-        DW2["Worker 2"]
-        DW3["Worker N"]
-    end
-
-    ENG[("🗄️ DB Engine")]
-    Res(["📤 응답"])
-
-    Req --> AQ
-    AQ --> AW1 & AW2 & AW3
-    AW1 & AW2 & AW3 --> DQ
-    DQ --> DW1 & DW2 & DW3
-    DW1 & DW2 & DW3 --> ENG
-    ENG --> Res
-
-    style API fill:#0d1117,stroke:#1f6feb
-    style DB  fill:#0d1117,stroke:#8b5cf6
-```
-
-**분리 효과**
-
-```
-단일 풀:  [무거운 쿼리가 스레드 독점] → 가벼운 요청도 대기 
-이중 풀:  [DB 풀에서 무거운 쿼리 격리] → API 풀은 항상 응답 가능
-```
-
-`/page` 병렬 조회는 DB 풀의 여러 Worker에서 동시에 실행되어 응답 시간을 단축합니다.
-
----
-
-## 빠른 실행
+POSIX socket과 pthread를 사용하므로 Linux 또는 WSL 환경이 필요합니다.
 
 ```bash
 make build
@@ -175,22 +68,31 @@ make build
 ```
 
 ```bash
-# 헬스체크
 curl http://localhost:8080/api/v1/health
 
-# SQL 실행
 curl -X POST http://localhost:8080/api/v1/sql \
   -H "Content-Type: application/json" \
-  -d '{"sql": "SELECT * FROM users"}'
-
-# 트랜잭션
-curl -X POST http://localhost:8080/api/v1/tx \
-  -H "Content-Type: application/json" \
-  -d '{"sqls": ["INSERT INTO users VALUES (1,\"alice\")", "UPDATE users SET name=\"bob\" WHERE id=1"]}'
+  -d '{"sql":"SELECT * FROM users"}'
 ```
-Docker 실행:
+
+Docker로도 실행할 수 있습니다.
 
 ```bash
-docker build -t sqlprocessor:local .
-docker run --rm -p 8080:8080 sqlprocessor:local ./bin/dbsrv
+docker build -t mini-dbms .
+docker run --rm -p 8080:8080 mini-dbms ./bin/dbsrv
 ```
+
+## 검증
+
+```bash
+make test
+```
+
+`make test`는 thread pool, MVCC 상태, DB API, transaction, HTTP API 시나리오를 실행합니다.
+
+부하 테스트와 세부 설계는 다음 문서에 정리되어 있습니다.
+
+- [아키텍처](./docs/ARCH.md)
+- [API](./docs/API.md)
+- [설계 결정](./docs/DECISIONS.md)
+- [테스트](./docs/TEST.md)

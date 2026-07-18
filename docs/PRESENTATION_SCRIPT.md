@@ -51,23 +51,14 @@
 
 ---
 
-## 4. 동시성 정책: MVCC와 Row-level Lock
-
-### MVCC가 막는 것
-
-- 읽는 도중 다른 트랜잭션 커밋이 있어도 중간 상태가 섞여 보이는 문제
-- 트랜잭션 단위 읽기 일관성 붕괴
-
-### Row-level Write Lock이 막는 것
-
-- 같은 `table + id`를 동시에 갱신할 때 생기는 write-write 충돌
-- 동일 row 동시 쓰기에서의 실패 급증
+## 4. 동시성 정책: table-snapshot COW MVCC와 충돌 제어
 
 정리하면:
-- **MVCC = 읽기 일관성 담당**
-- **Row-level lock = 동일 row 동시 쓰기 충돌 담당**
+- **snapshot read = 한 요청·트랜잭션 안의 읽기 일관성**
+- **table head/base 검사 = 명시적 transaction의 write-write conflict detection**
+- **autocommit mutex shard = 단건 write의 제한된 직렬화**
 
-[여기에 MVCC와 Row-level Lock 역할 분리 그림]
+[여기에 snapshot read, table conflict, autocommit serialization 역할 분리 그림]
 
 ---
 
@@ -79,12 +70,14 @@
 - write는 private working copy에 반영
 - commit 시 충돌 검사 후 install
 
-### 5-2) Row-level Write Lock
+### 5-2) Autocommit Write Mutex Shard
 
-- `/api/v1/sql` 단건 쓰기 경로에서 `table+id` 기준 shard lock
-- 같은 id 쓰기는 직렬화, 다른 id는 병렬 허용
+- `/api/v1/sql` 단건 쓰기에서 `table + id` hash로 mutex shard 선택
+- 같은 shard의 쓰기는 직렬화되지만 hash 충돌이 가능함
+- 명시적 transaction은 table head/base conflict detection 사용
+- 따라서 row-level lock이 아니라 제한된 autocommit serialization로 설명
 
-[여기에 동일 id 직렬화 / 다른 id 병렬 처리 그림]
+[여기에 mutex shard 충돌과 table-level conflict 범위 그림]
 
 ---
 
@@ -112,9 +105,9 @@
 동일 조건(`UPDATE only`, 32 VU, 20초) 기준:
 
 - 재시도/락 적용 전: 실패율이 매우 높게 발생(충돌 상황에서 대량 실패)
-- 재시도 + row-level lock 적용 후: **성공률 100%** 확인
+- 재시도 + autocommit mutex shard 정책을 적용한 당시 문서에는 **성공률 100%**로 기록되어 있음
 
-발표에서는 “왜 성공률이 올라갔는지”를 동시성 정책과 연결해서 설명하면 설득력이 높습니다.
+이 수치는 해당 조건의 역사적 관측값이며 일반적인 성공률 보장이 아닙니다. 원시 k6 결과가 저장소에 함께 보존되어 있지 않으므로 외부 제출 자료에서 인용하려면 같은 프로필을 다시 실행해 결과 artifact와 함께 제시해야 합니다.
 
 [여기에 적용 전/후 성공률 비교 막대 그래프 그림]
 
@@ -153,7 +146,7 @@
 
 1. CLI 엔진을 실제 서비스형 API 구조로 확장했다.
 2. MVCC로 읽기 일관성을 확보했다.
-3. Row-level lock으로 동일 row 동시 쓰기 충돌을 제어했다.
+3. table-level conflict detection과 autocommit mutex shard의 범위를 코드 기준으로 검증했다.
 4. 데모와 부하 테스트에서 결과를 수치로 검증했다.
 
 감사합니다.

@@ -86,6 +86,14 @@ flowchart TD
 4. 성공 시 새 version install
 5. 실패 시 working copy 폐기
 
+#### Snapshot과 table version 정리
+
+`mv_gc`는 read/transaction 종료 시 해당 snapshot id를 active snapshot 목록에서 제거합니다. `dbapi.c`의 `gc_tabs`는 남아 있는 active snapshot이 참조할 수 있는 범위를 계산해 오래된 `TabVer` chain을 정리합니다. row-version object는 사용하지 않습니다.
+
+#### 쓰기 직렬화 범위
+
+단건 autocommit write는 `table + id` hash로 선택한 1,024개 mutex shard를 사용합니다. 이는 동일 hash bucket의 write를 직렬화하는 구현이며, 명시적 transaction의 충돌 단위는 table head/base입니다. 따라서 API engine의 동시성 정책은 row-level lock이 아니라 table-snapshot COW MVCC와 제한된 autocommit write serialization의 조합입니다.
+
 ### 5. 인덱스
 
 기존 `src/legacy/bptree.c` 를 재사용합니다.
@@ -101,6 +109,8 @@ SELECT는 조건을 보고 인덱스 경로를 먼저 시도하고, 맞지 않�
 - API engine: CSV persisted table + in-memory version chain
 
 API engine commit 시에는 CSV를 새 상태로 flush하고, 기존 `.delta`, `.idx` side file은 제거합니다.
+
+CSV persistence는 `<table>.csv.tmp`를 작성하고 rename으로 기존 CSV를 교체합니다. 이 경로에는 WAL append, fsync ordering, startup replay가 없으므로 crash recovery를 제공하는 full WAL로 설명하지 않습니다.
 
 ## `/page` 병렬 처리
 

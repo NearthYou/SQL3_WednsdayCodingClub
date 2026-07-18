@@ -32,3 +32,11 @@ v1 목표는 안정적인 API/동시성/트랜잭션 시연입니다. DDL까지 
 ## 6. 기본 데이터 루트를 `data/` 로 둔 이유
 
 데모용 fixture를 저장소 루트 CSV와 섞지 않기 위해서입니다. 테스트는 `DB_ROOT` 로 임시 디렉터리를 따로 사용합니다.
+
+## 7. autocommit mutex shard를 row-level lock으로 부르지 않는 이유
+
+mutex index는 `table + id` hash로 선택되어 서로 다른 row도 같은 shard에 충돌할 수 있습니다. 또한 명시적 transaction은 이 lock이 아니라 table head/base conflict detection에 의존합니다. 문서에서는 구현 범위를 `autocommit write mutex shard`로 제한해 표현합니다.
+
+## 8. API persistence를 full WAL로 부르지 않는 이유
+
+API engine은 commit 결과를 임시 CSV에 쓴 뒤 rename합니다. WAL append/replay와 crash recovery ordering이 없으므로 durability는 CSV flush 수준으로 설명합니다. legacy CLI의 `.delta`와 `.idx`는 API engine의 recovery contract로 확장 해석하지 않습니다.

@@ -13,7 +13,7 @@ Client
 → Route / DB Adapter
 → DB Query Pool
 → SQL Engine
-→ CSV Table · B+ Tree · WAL
+→ CSV persisted tables · PK/UK B+ Tree · committed table-version chain
 ```
 
 API 요청을 받는 풀과 병렬 SQL을 실행하는 풀을 분리했습니다. 무거운 쿼리가 API worker를 모두 점유하거나 같은 풀을 다시 기다리는 상황을 피하기 위한 선택입니다.
@@ -23,10 +23,10 @@ API 요청을 받는 풀과 병렬 SQL을 실행하는 풀을 분리했습니다
 | 영역 | 구현 내용 |
 | --- | --- |
 | API | POSIX socket 기반 HTTP server와 JSON 응답 |
-| 동시성 | 고정 크기 API pool, DB query pool, row-level write lock |
-| 읽기 | table-snapshot copy-on-write MVCC |
-| 트랜잭션 | private working copy, rollback, commit conflict detection |
-| 저장 | CSV table, PK·UK B+ Tree, WAL recovery |
+| 동시성 | 고정 크기 API pool, DB query pool, table-snapshot COW MVCC, autocommit write mutex shard |
+| 읽기 | immutable committed table version을 선택하는 snapshot read |
+| 트랜잭션 | private working copy, rollback discard, table-head/base conflict detection |
+| 저장 | CSV 임시 파일 작성 후 rename, PK·UK B+ Tree; full WAL recovery는 미구현 |
 | 관찰 | health, metrics, 병렬 조회 trace |
 
 ## 트랜잭션 기준
@@ -36,8 +36,8 @@ API 요청을 받는 풀과 병렬 SQL을 실행하는 풀을 분리했습니다
 ```text
 snapshot 획득
 → private working copy에서 SQL 실행
-→ commit 직전 version conflict 검사
-→ 성공: WAL 기록 후 반영
+→ commit 직전 table head/base conflict 검사
+→ 성공: 새 committed table version 설치 후 CSV flush
 → 실패: working copy 폐기
 ```
 
@@ -45,7 +45,9 @@ snapshot 획득
 
 이 구현은 row-version chain을 두는 일반적인 MVCC가 아니라 table-snapshot COW 방식입니다. 따라서 충돌도 table 단위로 발생할 수 있습니다.
 
-`mv_gc`는 종료된 snapshot을 active snapshot 목록에서 제거합니다. 오래된 row version을 회수하는 함수가 아니며 현재 구현에는 row-version reclamation이 없습니다. `gc_wait`도 남아 있는 active snapshot과 현재 version의 차이를 나타내는 상태값입니다.
+`mv_gc`는 종료된 snapshot id를 active snapshot 목록에서 제거합니다. 이후 `dbapi.c`의 별도 `gc_tabs` 경로가 더 이상 active snapshot에서 보이지 않는 오래된 **table version chain**을 정리합니다. row별 version object를 두는 구조가 아니므로 row-version reclamation이라고 설명하지 않습니다. `gc_wait`는 남아 있는 active snapshot의 최소 version과 현재 version의 차이를 나타냅니다.
+
+단건 autocommit write는 `table + id`를 해시한 1,024개 mutex shard 중 하나로 직렬화됩니다. 해시 충돌이 가능하고 명시적 다중 문장 transaction은 table head/base conflict detection을 사용하므로, 이 장치를 진정한 row-level lock으로 부르지 않습니다.
 
 ## API
 

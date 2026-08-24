@@ -1,4 +1,4 @@
-# MiniDBMS
+# ConcurrentSQLServer
 
 C로 만든 SQL engine을 여러 client가 동시에 사용할 수 있는 HTTP API server로 확장했습니다. B+Tree index, 두 개의 thread pool, snapshot transaction, CSV persistence를 하나의 실행 흐름으로 연결한 팀 프로젝트입니다.
 
@@ -11,7 +11,7 @@ C로 만든 SQL engine을 여러 client가 동시에 사용할 수 있는 HTTP A
 ```mermaid
 flowchart LR
     P1[Phase 1\nCSV와 SQL parser] --> P2[Phase 2\nB+Tree와 binary storage]
-    P2 --> P3[MiniDBMS\nHTTP API와 transaction]
+    P2 --> P3[ConcurrentSQLServer\nHTTP API와 transaction]
     P1 --> ROLLBACK[staging rollback]
     P2 --> INDEX[index lookup]
     P3 --> CONCURRENCY[동시 요청 처리]
@@ -133,5 +133,5 @@ make bench-smoke
 
 ## 관련 프로젝트
 
-- [MiniDBMSPhase1](https://github.com/NearthYou/MiniDBMSPhase1): CSV parser와 staging rollback
-- [MiniDBMSPhase2](https://github.com/NearthYou/MiniDBMSPhase2): B+Tree와 binary storage
+- [CSVQueryEngine](https://github.com/NearthYou/CSVQueryEngine): CSV parser와 staging rollback
+- [BPlusTreeQueryEngine](https://github.com/NearthYou/BPlusTreeQueryEngine): B+Tree와 binary storage

@@ -116,8 +116,9 @@ $(BENCH_RUNNER): $(BENCH_RUNNER_SRC)
 $(BENCH_TEST): $(BENCH_TEST_SRC)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(BENCH_TEST_SRC) -o $(BENCH_TEST)
 
-bench-test: $(BENCH_TEST)
+bench-test: $(BENCH_TEST) $(TARGET) $(BENCH_GEN)
 	./$(BENCH_TEST)
+	sh tests/bench_path_test.sh
 
 $(JUNGLE_DATASET): $(TARGET)
 	./$(TARGET) --generate-jungle $(JUNGLE_RECORDS)

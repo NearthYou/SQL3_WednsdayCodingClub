@@ -7,7 +7,8 @@
 #include <time.h>
 
 #define TABLE_NAME "jungle_workload_users"
-#define SOURCE_CSV "data/legacy/jungle_benchmark_users.csv"
+#define SOURCE_CSV_NAME "jungle_benchmark_users.csv"
+#define SOURCE_CSV "data/legacy/" SOURCE_CSV_NAME
 #define WORKLOAD_CSV "data/legacy/jungle_workload_users.csv"
 
 #if defined(_WIN32)
@@ -96,7 +97,7 @@ static int ensure_source_csv(int rows) {
         if (header_ok) return 1;
     }
 
-    snprintf(cmd, sizeof(cmd), SQLPROCESSOR_CMD " --generate-jungle %d %s", rows, SOURCE_CSV);
+    snprintf(cmd, sizeof(cmd), SQLPROCESSOR_CMD " --generate-jungle %d %s", rows, SOURCE_CSV_NAME);
     if (system(cmd) != 0) {
         fprintf(stderr, "[error] failed to generate source CSV: %s\n", cmd);
         return 0;
